@@ -1,79 +1,117 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.7;
-// Remix:
-// import {Chainlink, ChainlinkClient} from "@chainlink/contracts@1.3.0/src/v0.8/ChainlinkClient.sol";
-// import {ConfirmedOwner} from "@chainlink/contracts@1.3.0/src/v0.8/shared/access/ConfirmedOwner.sol";
-// import {LinkTokenInterface} from "@chainlink/contracts@1.3.0/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
+pragma solidity ^0.8.24;
 
-// Local:
-import "@chainlink/contracts/src/v0.8/ChainlinkClient.sol";
-import "@chainlink/contracts/src/v0.8/shared/access/ConfirmedOwner.sol";
-import "@chainlink/contracts/src/v0.8/shared/interfaces/LinkTokenInterface.sol";
+import {FunctionsClient} from "@chainlink/contracts/src/v0.8/functions/v1_0_0/FunctionsClient.sol";
+import {ConfirmedOwner} from "@chainlink/contracts/src/v0.8/shared/access/ConfirmedOwner.sol";
+import {FunctionsRequest} from "@chainlink/contracts/src/v0.8/functions/v1_0_0/libraries/FunctionsRequest.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 
-contract TakumiPay is ChainlinkClient, ConfirmedOwner {
-    using Chainlink for Chainlink.Request;
+/**
+ * @title TakumiPay
+ * @notice This contract calls an external purchase API using Chainlink Functions,
+ *         decodes the response, and stores it in an array of Purchase structs.
+ */
+contract TakumiPay is FunctionsClient, ConfirmedOwner {
+    using FunctionsRequest for FunctionsRequest.Request;
+    using Strings for address;
 
-    bytes32 private jobId;
-    uint256 private fee;
+    // State variables for tracking request details
+    bytes32 public s_lastRequestId;
+    bytes public s_lastResponse;
+    bytes public s_lastError;
+    string[] public purchases;
 
-    event ProductPurchased(bytes32 indexed requestId, string productId);
-    event ProductListUpdated();
 
-    constructor() ConfirmedOwner(msg.sender) {
-        _setChainlinkToken(0x779877A7B0D9E8603169DdbD7836e478b4624789);
-        _setChainlinkOracle(0x6090149792dAAeE9D1D568c9f9a6F6B46AA29eFD);
-        jobId = "ca98366cc7314957b8c012c72f05aeeb";
-        fee = (1 * 10 ** 18) / 10; // 0.1 LINK
-    }
+    // Event emitted when a response is received and stored
+    event Response(
+        bytes32 indexed requestId,
+        string purchaseResult,
+        bytes response,
+        bytes err
+    );
 
+    // Router address for Chainlink Functions on Sepolia
+    address router = 0xb83E47C2bC239B3bf370bc41e1459A34b41238D0;
+
+    // Inline JavaScript source code that builds the API URL and returns a delimited string.
+    // Expects:
+    //   args[0] = contract address (hex string)
+    //   args[1] = productId
+    string source = 
+        "const contractAddress = args[0];"
+        "const productId = args[1];"
+        "const url = `http://195.26.240.233:3000/purchase?contractAddress=${contractAddress}&productId=${productId}`;"
+        "const apiResponse = await Functions.makeHttpRequest({ url });"
+        "if (apiResponse.error) {"
+        "  throw Error('Request failed');"
+        "}"
+        "const { data } = apiResponse;"
+        // Return a single string with fields separated by '#' in the order:
+        // status, transactionId, contractAddress, product.id, product.name, product.price, timestamp
+        "return Functions.encodeString(`${data.status}#${data.transactionId}#${data.contractAddress}#${data.product.id}#${data.product.name}#${data.product.price}#${data.timestamp}`);";
+
+    // DON ID for Sepolia (Decentralized Oracle Network ID)
+    bytes32 donID = 0x66756e2d657468657265756d2d7365706f6c69612d3100000000000000000000;
+
+    /**
+     * @notice Constructor initializes the contract with the Chainlink Functions router.
+     */
+    constructor() FunctionsClient(router) ConfirmedOwner(msg.sender) {}
+
+    /**
+     * @notice Sends a Chainlink Functions request to call the purchase API.
+     * @param subscriptionId The subscription ID used for billing.
+     * @param _productId The product ID to include in the API call.
+     * @param _gasLimit The gas limit to be used for the callback execution.
+     * @return requestId The unique identifier of the request.
+     */
     function purchaseProduct(
-        string memory _productId
-    ) public returns (bytes32 requestId) {
-        Chainlink.Request memory req = _buildChainlinkRequest(
-            jobId,
-            address(this),
-            this.fulfillPurchase.selector
+        uint64 subscriptionId,
+        string calldata _productId,
+        uint32 _gasLimit
+    ) external onlyOwner returns (bytes32 requestId) {
+        FunctionsRequest.Request memory req;
+        req.initializeRequestForInlineJavaScript(source);
+
+        // Build arguments: first, the contract address (as a hex string), then the productId.
+        string[] memory args = new string[](2);
+        args[0] = Strings.toHexString(address(this));
+        args[1] = _productId;
+        req.setArgs(args);
+
+        // Encode the request and send it via the Functions router using the provided _gasLimit.
+        s_lastRequestId = _sendRequest(
+            req.encodeCBOR(),
+            subscriptionId,
+            _gasLimit,
+            donID
         );
 
-        string memory url = string.concat(
-            "http://195.26.240.233:3000/purchase?contractAddress=",
-            addressToString(address(this)),
-            "&productId=",
-            _productId
-        );
-
-        req._add("get", url); // Use _add instead of add
-        return _sendChainlinkRequest(req, fee);
+        return s_lastRequestId;
     }
 
-    function fulfillPurchase(
-        bytes32 _requestId
-    ) public recordChainlinkFulfillment(_requestId) {
-        emit ProductPurchased(_requestId, "productId");
+    /**
+     * @notice Callback function invoked by the Chainlink Functions oracle.
+     *         It decodes the delimited response and stores it in the purchases array.
+     * @param requestId The ID of the request.
+     * @param response The encoded API response.
+     * @param err Any error encountered during the API call.
+     */
+    function fulfillRequest(
+        bytes32 requestId,
+        bytes memory response,
+        bytes memory err
+    ) internal override {
+        require(s_lastRequestId == requestId, "Unexpected request ID");
+        s_lastResponse = response;
+        s_lastError = err;
+
+        // Convert response bytes to a string.
+        string memory fullResponse = string(response);
+
+        purchases.push(fullResponse);
+
+        emit Response(requestId, fullResponse, response, err);
     }
 
-    // Helper to convert address to string
-    function addressToString(
-        address _addr
-    ) internal pure returns (string memory) {
-        bytes32 value = bytes32(uint256(uint160(_addr)));
-        bytes memory alphabet = "0123456789abcdef";
-
-        bytes memory str = new bytes(42);
-        str[0] = "0";
-        str[1] = "x";
-        for (uint i = 0; i < 20; i++) {
-            str[2 + i * 2] = alphabet[uint(uint8(value[i + 12] >> 4))]; // Fixed here
-            str[3 + i * 2] = alphabet[uint(uint8(value[i + 12] & 0x0f))]; // Fixed here
-        }
-        return string(str);
-    }
-
-    function withdrawLink() public onlyOwner {
-        LinkTokenInterface link = LinkTokenInterface(_chainlinkTokenAddress());
-        require(
-            link.transfer(msg.sender, link.balanceOf(address(this))),
-            "Unable to transfer"
-        );
-    }
 }
