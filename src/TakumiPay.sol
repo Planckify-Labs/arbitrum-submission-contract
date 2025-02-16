@@ -21,7 +21,6 @@ contract TakumiPay is FunctionsClient, ConfirmedOwner {
     bytes public s_lastError;
     string[] public purchases;
 
-
     // Event emitted when a response is received and stored
     event Response(
         bytes32 indexed requestId,
@@ -37,21 +36,23 @@ contract TakumiPay is FunctionsClient, ConfirmedOwner {
     // Expects:
     //   args[0] = contract address (hex string)
     //   args[1] = productId
-    string source = 
+    string source =
         "const contractAddress = args[0];"
         "const productId = args[1];"
-        "const url = `http://195.26.240.233:3000/purchase?contractAddress=${contractAddress}&productId=${productId}`;"
-        "const apiResponse = await Functions.makeHttpRequest({ url });"
+        "const url = 'http://195.26.240.233:3000/purchase';"
+        "const body = { contractAddress: contractAddress, productId: productId };"
+        "const headers = { 'Content-Type': 'application/json', 'X-API-Key': 'your_api_key_here' };"
+        "const apiResponse = await Functions.makeHttpRequest({ url: url, method: 'POST', headers: headers, data: body });"
         "if (apiResponse.error) {"
         "  throw Error('Request failed');"
         "}"
         "const { data } = apiResponse;"
-        // Return a single string with fields separated by '#' in the order:
-        // status, transactionId, contractAddress, product.id, product.name, product.price, timestamp
-        "return Functions.encodeString(`${data.status}#${data.transactionId}#${data.contractAddress}#${data.product.id}#${data.product.name}#${data.product.price}#${data.timestamp}`);";
-
+        "return Functions.encodeString("
+        "  `${data.status}#${data.transactionId}#${data.contractAddress}#${data.product.id}#${data.product.name}#${data.product.price}#${data.timestamp}`"
+        ");";
     // DON ID for Sepolia (Decentralized Oracle Network ID)
-    bytes32 donID = 0x66756e2d657468657265756d2d7365706f6c69612d3100000000000000000000;
+    bytes32 donID =
+        0x66756e2d657468657265756d2d7365706f6c69612d3100000000000000000000;
 
     /**
      * @notice Constructor initializes the contract with the Chainlink Functions router.
@@ -113,5 +114,4 @@ contract TakumiPay is FunctionsClient, ConfirmedOwner {
 
         emit Response(requestId, fullResponse, response, err);
     }
-
 }
