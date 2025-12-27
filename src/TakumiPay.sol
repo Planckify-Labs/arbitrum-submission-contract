@@ -1,117 +1,264 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
-import {FunctionsClient} from "@chainlink/contracts/src/v0.8/functions/v1_0_0/FunctionsClient.sol";
-import {ConfirmedOwner} from "@chainlink/contracts/src/v0.8/shared/access/ConfirmedOwner.sol";
-import {FunctionsRequest} from "@chainlink/contracts/src/v0.8/functions/v1_0_0/libraries/FunctionsRequest.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/**
- * @title TakumiPay
- * @notice This contract calls an external purchase API using Chainlink Functions,
- *         decodes the response, and stores it in an array of Purchase structs.
- */
-contract TakumiPay is FunctionsClient, ConfirmedOwner {
-    using FunctionsRequest for FunctionsRequest.Request;
-    using Strings for address;
+contract TakumiWallet {
+    using SafeERC20 for IERC20;
 
-    // State variables for tracking request details
-    bytes32 public s_lastRequestId;
-    bytes public s_lastResponse;
-    bytes public s_lastError;
-    string[] public purchases;
+    uint256 public txCounter;
+    address public owner;
 
-    // Event emitted when a response is received and stored
-    event Response(
-        bytes32 indexed requestId,
-        string purchaseResult,
-        bytes response,
-        bytes err
-    );
-
-    // Router address for Chainlink Functions on Sepolia
-    address router = 0xb83E47C2bC239B3bf370bc41e1459A34b41238D0;
-
-    // Inline JavaScript source code that builds the API URL and returns a delimited string.
-    // Expects:
-    //   args[0] = contract address (hex string)
-    //   args[1] = productId
-    string source =
-        "const contractAddress = args[0];"
-        "const productId = args[1];"
-        "const url = 'http://195.26.240.233:3000/purchase';"
-        "const body = { contractAddress: contractAddress, productId: productId };"
-        "const headers = { 'Content-Type': 'application/json', 'X-API-Key': 'your_api_key_here' };"
-        "const apiResponse = await Functions.makeHttpRequest({ url: url, method: 'POST', headers: headers, data: body });"
-        "if (apiResponse.error) {"
-        "  throw Error('Request failed');"
-        "}"
-        "const { data } = apiResponse;"
-        "return Functions.encodeString("
-        "  `${data.status}#${data.transactionId}#${data.contractAddress}#${data.product.id}#${data.product.name}#${data.product.price}#${data.timestamp}`"
-        ");";
-    // DON ID for Sepolia (Decentralized Oracle Network ID)
-    bytes32 donID =
-        0x66756e2d657468657265756d2d7365706f6c69612d3100000000000000000000;
-
-    /**
-     * @notice Constructor initializes the contract with the Chainlink Functions router.
-     */
-    constructor() FunctionsClient(router) ConfirmedOwner(msg.sender) {}
-
-    /**
-     * @notice Sends a Chainlink Functions request to call the purchase API.
-     * @param subscriptionId The subscription ID used for billing.
-     * @param _productId The product ID to include in the API call.
-     * @param _gasLimit The gas limit to be used for the callback execution.
-     * @return requestId The unique identifier of the request.
-     */
-    function purchaseProduct(
-        uint64 subscriptionId,
-        string calldata _productId,
-        uint32 _gasLimit
-    ) external onlyOwner returns (bytes32 requestId) {
-        FunctionsRequest.Request memory req;
-        req.initializeRequestForInlineJavaScript(source);
-
-        // Build arguments: first, the contract address (as a hex string), then the productId.
-        string[] memory args = new string[](2);
-        args[0] = Strings.toHexString(address(this));
-        args[1] = _productId;
-        req.setArgs(args);
-
-        // Encode the request and send it via the Functions router using the provided _gasLimit.
-        s_lastRequestId = _sendRequest(
-            req.encodeCBOR(),
-            subscriptionId,
-            _gasLimit,
-            donID
-        );
-
-        return s_lastRequestId;
+    struct Transaction {
+        address walletAddress;      
+        address tokenAddress;       // address(0) = native token (ETH, MATIC, etc.)
+        string bookingId;           
+        uint256 exchangeRateId;     
+        string productVariantId;    
+        uint256 timestamp;          
+        string refId;               
+        uint256 amount;             
     }
 
-    /**
-     * @notice Callback function invoked by the Chainlink Functions oracle.
-     *         It decodes the delimited response and stores it in the purchases array.
-     * @param requestId The ID of the request.
-     * @param response The encoded API response.
-     * @param err Any error encountered during the API call.
-     */
-    function fulfillRequest(
-        bytes32 requestId,
-        bytes memory response,
-        bytes memory err
-    ) internal override {
-        require(s_lastRequestId == requestId, "Unexpected request ID");
-        s_lastResponse = response;
-        s_lastError = err;
+    mapping(uint256 => Transaction) public transactions;
+    mapping(address => uint256[]) private userTransactions;  
+    mapping(string => uint256) private refToTx;              
 
-        // Convert response bytes to a string.
-        string memory fullResponse = string(response);
+    mapping(address => bool) private admins;
+    address[] private adminList;
 
-        purchases.push(fullResponse);
+    event TransactionCreated(
+        uint256 indexed txId,
+        address indexed walletAddress,
+        address indexed tokenAddress, // address(0) = native token
+        string bookingId,
+        uint256 exchangeRateId,
+        string productVariantId,
+        uint256 timestamp,
+        string refId,
+        uint256 amount
+    );
 
-        emit Response(requestId, fullResponse, response, err);
+    event AdminAdded(address indexed admin);
+    event AdminRemoved(address indexed admin);
+    event Withdraw(address indexed to, address indexed token, uint256 amount);
+    event NativeDeposit(address indexed from, uint256 amount);
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not authorized: only owner");
+        _;
+    }
+
+    modifier onlyAdminOrOwner() {
+        require(msg.sender == owner || admins[msg.sender], "Not authorized: only owner/admin");
+        _;
+    }
+
+    modifier onlyUser(address user) {
+        require(msg.sender == user, "Not authorized: only user");
+        _;
+    }
+
+    constructor() {
+        owner = msg.sender;
+    }
+
+    // ====== Create Transaction (supports ERC20 + Native) ======
+
+    function createTransaction(
+        string calldata bookingId,
+        uint256 exchangeRateId,
+        string calldata productVariantId,
+        address tokenAddress,
+        string calldata refId,
+        uint256 amount
+    ) external payable {
+        require(refToTx[refId] == 0, "refId must be unique");
+        require(amount > 0, "Amount must be greater than 0");
+
+        if (tokenAddress == address(0)) {
+            // Native token (ETH, MATIC, etc.)
+            require(msg.value == amount, "Incorrect amount sent");
+        } else {
+            // ERC20 token
+            require(msg.value == 0, "ETH not required for ERC20");
+            IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
+        }
+
+        txCounter += 1;
+
+        transactions[txCounter] = Transaction({
+            walletAddress: msg.sender,
+            tokenAddress: tokenAddress,
+            bookingId: bookingId,
+            exchangeRateId: exchangeRateId,
+            productVariantId: productVariantId,
+            timestamp: block.timestamp,
+            refId: refId,
+            amount: amount
+        });
+
+        userTransactions[msg.sender].push(txCounter);
+        refToTx[refId] = txCounter;
+
+        emit TransactionCreated(
+            txCounter,
+            msg.sender,
+            tokenAddress,
+            bookingId,
+            exchangeRateId,
+            productVariantId,
+            block.timestamp,
+            refId,
+            amount
+        );
+    }
+
+    // ====== Withdrawals (ERC20 + Native) ======
+
+    function withdraw(address token, address to, uint256 amount) external onlyOwner {
+        require(to != address(0), "Invalid recipient");
+        require(amount > 0, "Amount must be greater than 0");
+
+        if (token == address(0)) {
+            // Withdraw native token
+            require(address(this).balance >= amount, "Insufficient ETH balance");
+            (bool success, ) = payable(to).call{value: amount}("");
+            require(success, "ETH transfer failed");
+        } else {
+            // Withdraw ERC20
+            IERC20(token).safeTransfer(to, amount);
+        }
+
+        emit Withdraw(to, token, amount);
+    }
+
+    function withdrawAll(address token, address to) external onlyOwner {
+        require(to != address(0), "Invalid recipient");
+
+        uint256 balance;
+        if (token == address(0)) {
+            balance = address(this).balance;
+            require(balance > 0, "No ETH balance");
+            (bool success, ) = payable(to).call{value: balance}("");
+            require(success, "ETH transfer failed");
+        } else {
+            balance = IERC20(token).balanceOf(address(this));
+            require(balance > 0, "No token balance");
+            IERC20(token).safeTransfer(to, balance);
+        }
+
+        emit Withdraw(to, token, balance);
+    }
+
+    // ====== ETH Direct Deposit Handling ======
+
+    receive() external payable {
+        emit NativeDeposit(msg.sender, msg.value);
+    }
+
+    fallback() external payable {
+        if (msg.value > 0) {
+            emit NativeDeposit(msg.sender, msg.value);
+        }
+    }
+
+    // ===== Admin Management =====
+
+    function addAdmin(address admin) external onlyOwner {
+        require(!admins[admin], "Already admin");
+        admins[admin] = true;
+        adminList.push(admin);
+        emit AdminAdded(admin);
+    }
+
+    function removeAdmin(address admin) external onlyOwner {
+        require(admins[admin], "Not an admin");
+        admins[admin] = false;
+        emit AdminRemoved(admin);
+    }
+
+    function getAllAdmins() external view onlyOwner returns (address[] memory) {
+        return adminList;
+    }
+
+    function isAdmin(address admin) external view returns (bool) {
+        return admins[admin];
+    }
+
+    // ===== View Functions =====
+
+    function getUserTransactions(uint256 offset, uint256 limit) external view onlyUser(msg.sender) returns (Transaction[] memory) {
+        uint256[] memory txIds = userTransactions[msg.sender];
+        uint256 total = txIds.length;
+
+        if (offset >= total) {
+            return new Transaction[](0) ;
+        }
+
+        uint256 available = total - offset;
+        uint256 size = limit < available ? limit : available;
+
+        Transaction[] memory result = new Transaction[](size);
+        for (uint256 i = 0; i < size; i++) {
+            result[i] = transactions[txIds[offset + i]];
+        }
+        return result;
+    }
+
+    function getTransactionsByAddress(address user, uint256 offset, uint256 limit) external view onlyAdminOrOwner returns (Transaction[] memory) {
+        uint256[] memory txIds = userTransactions[user];
+        uint256 total = txIds.length;
+
+        if (offset >= total) {
+            return new Transaction[](0) ;
+        }
+
+        uint256 available = total - offset;
+        uint256 size = limit < available ? limit : available;
+
+        Transaction[] memory result = new Transaction[](size);
+        for (uint256 i = 0; i < size; i++) {
+            result[i] = transactions[txIds[offset + i]];
+        }
+        return result;
+    }
+
+    function getTransactionByRef(string calldata refId) external view onlyAdminOrOwner returns (Transaction memory) {
+        uint256 txId = refToTx[refId];
+        require(txId != 0, "Transaction not found");
+        return transactions[txId];
+    }
+
+    function getUserTransactionCount(address user) external view onlyAdminOrOwner returns (uint256) {
+        return userTransactions[user].length;
+    }
+
+    function getTransactionsInRange(uint256 start, uint256 end, uint256 offset, uint256 limit) external view onlyAdminOrOwner returns (Transaction[] memory) {
+        Transaction[] memory temp = new Transaction[](txCounter);
+        uint256 count = 0;
+
+        for (uint256 i = 1; i <= txCounter; i++) {
+            Transaction memory txData = transactions[i];
+            if (txData.timestamp >= start && txData.timestamp <= end) {
+                temp[count] = txData;
+                count++;
+            }
+        }
+
+        if (offset >= count) {
+            return new Transaction[](0) ;
+        }
+
+        uint256 available = count - offset;
+        uint256 size = limit < available ? limit : available;
+
+        Transaction[] memory result = new Transaction[](size);
+        for (uint256 j = 0; j < size; j++) {
+            result[j] = temp[offset + j];
+        }
+
+        return result;
     }
 }
