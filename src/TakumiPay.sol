@@ -21,9 +21,31 @@ contract TakumiWallet {
         uint256 amount;             
     }
 
+    // ====== Point Deposits ======
+
+    struct PointDeposit {
+        address walletAddress;
+        address tokenAddress;
+        uint256 amount;
+        string  refId;
+        uint256 timestamp;
+    }
+
+    uint256 public pointDepositCounter;
+    mapping(uint256 => PointDeposit) public pointDeposits;
+    mapping(string => uint256) private pointRefToDeposit;
+    mapping(address => uint256[]) private userPointDeposits;
+
+    mapping(address => bool) public allowedPointTokens;
+    address[] private allowedPointTokenList;
+
+    bool public pointDepositsPaused;
+
+    // ====== End Point Deposits ======
+
     mapping(uint256 => Transaction) public transactions;
-    mapping(address => uint256[]) private userTransactions;  
-    mapping(string => uint256) private refToTx;              
+    mapping(address => uint256[]) private userTransactions;
+    mapping(string => uint256) private refToTx;
 
     mapping(address => bool) private admins;
     address[] private adminList;
@@ -45,6 +67,19 @@ contract TakumiWallet {
     event Withdraw(address indexed to, address indexed token, uint256 amount);
     event NativeDeposit(address indexed from, uint256 amount);
 
+    event PointDepositCreated(
+        uint256 indexed depositId,
+        address indexed walletAddress,
+        address indexed tokenAddress,
+        string  refId,
+        uint256 amount,
+        uint256 timestamp
+    );
+
+    event PointTokenAdded(address indexed token);
+    event PointTokenRemoved(address indexed token);
+    event PointDepositsPausedToggled(bool paused);
+
     modifier onlyOwner() {
         require(msg.sender == owner, "Not authorized: only owner");
         _;
@@ -57,6 +92,11 @@ contract TakumiWallet {
 
     modifier onlyUser(address user) {
         require(msg.sender == user, "Not authorized: only user");
+        _;
+    }
+
+    modifier whenPointDepositsActive() {
+        require(!pointDepositsPaused, "Point deposits are paused");
         _;
     }
 
@@ -260,5 +300,131 @@ contract TakumiWallet {
         }
 
         return result;
+    }
+
+    // ====== Point Deposit Functions ======
+
+    function depositPoints(
+        address tokenAddress,
+        string calldata refId,
+        uint256 amount
+    ) external whenPointDepositsActive {
+        require(allowedPointTokens[tokenAddress], "Token not allowed for point deposits");
+        require(pointRefToDeposit[refId] == 0, "refId already used");
+        require(amount > 0, "Amount must be greater than 0");
+
+        IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
+
+        pointDepositCounter += 1;
+
+        pointDeposits[pointDepositCounter] = PointDeposit({
+            walletAddress: msg.sender,
+            tokenAddress: tokenAddress,
+            amount: amount,
+            refId: refId,
+            timestamp: block.timestamp
+        });
+
+        userPointDeposits[msg.sender].push(pointDepositCounter);
+        pointRefToDeposit[refId] = pointDepositCounter;
+
+        emit PointDepositCreated(
+            pointDepositCounter,
+            msg.sender,
+            tokenAddress,
+            refId,
+            amount,
+            block.timestamp
+        );
+    }
+
+    // ====== Point Deposit View Functions ======
+
+    function getPointDepositByRef(
+        string calldata refId
+    ) external view onlyAdminOrOwner returns (PointDeposit memory) {
+        uint256 depositId = pointRefToDeposit[refId];
+        require(depositId != 0, "Point deposit not found");
+        return pointDeposits[depositId];
+    }
+
+    function getPointDepositsByAddress(
+        address user,
+        uint256 offset,
+        uint256 limit
+    ) external view onlyAdminOrOwner returns (PointDeposit[] memory) {
+        uint256[] memory depositIds = userPointDeposits[user];
+        uint256 total = depositIds.length;
+
+        if (offset >= total) {
+            return new PointDeposit[](0);
+        }
+
+        uint256 available = total - offset;
+        uint256 size = limit < available ? limit : available;
+
+        PointDeposit[] memory result = new PointDeposit[](size);
+        for (uint256 i = 0; i < size; i++) {
+            result[i] = pointDeposits[depositIds[offset + i]];
+        }
+        return result;
+    }
+
+    function getUserPointDeposits(
+        uint256 offset,
+        uint256 limit
+    ) external view onlyUser(msg.sender) returns (PointDeposit[] memory) {
+        uint256[] memory depositIds = userPointDeposits[msg.sender];
+        uint256 total = depositIds.length;
+
+        if (offset >= total) {
+            return new PointDeposit[](0);
+        }
+
+        uint256 available = total - offset;
+        uint256 size = limit < available ? limit : available;
+
+        PointDeposit[] memory result = new PointDeposit[](size);
+        for (uint256 i = 0; i < size; i++) {
+            result[i] = pointDeposits[depositIds[offset + i]];
+        }
+        return result;
+    }
+
+    function getUserPointDepositCount(
+        address user
+    ) external view onlyAdminOrOwner returns (uint256) {
+        return userPointDeposits[user].length;
+    }
+
+    // ====== Point Token Whitelist Management ======
+
+    function addAllowedPointToken(address token) external onlyOwner {
+        require(token != address(0), "Invalid token address");
+        require(!allowedPointTokens[token], "Token already allowed");
+        allowedPointTokens[token] = true;
+        allowedPointTokenList.push(token);
+        emit PointTokenAdded(token);
+    }
+
+    function removeAllowedPointToken(address token) external onlyOwner {
+        require(allowedPointTokens[token], "Token not in whitelist");
+        allowedPointTokens[token] = false;
+        emit PointTokenRemoved(token);
+    }
+
+    function getAllowedPointTokens() external view returns (address[] memory) {
+        return allowedPointTokenList;
+    }
+
+    function isAllowedPointToken(address token) external view returns (bool) {
+        return allowedPointTokens[token];
+    }
+
+    // ====== Point Deposit Pause Control ======
+
+    function setPointDepositsPaused(bool paused) external onlyOwner {
+        pointDepositsPaused = paused;
+        emit PointDepositsPausedToggled(paused);
     }
 }
