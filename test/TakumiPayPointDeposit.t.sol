@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../src/TakumiPay.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract MockERC20 is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
@@ -29,7 +30,13 @@ contract TakumiPayPointDepositTest is Test {
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
 
-        wallet = new TakumiWallet();
+        TakumiWallet implementation = new TakumiWallet();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation),
+            abi.encodeCall(TakumiWallet.initialize, (owner))
+        );
+        wallet = TakumiWallet(payable(address(proxy)));
+
         usdc = new MockERC20("USD Coin", "USDC");
         usdt = new MockERC20("Tether USD", "USDT");
 
@@ -152,7 +159,7 @@ contract TakumiPayPointDepositTest is Test {
 
         vm.startPrank(user1);
         usdc.approve(address(wallet), 100e6);
-        vm.expectRevert("Point deposits are paused");
+        vm.expectRevert(TakumiWallet.PointDepositsPaused.selector);
         wallet.depositPoints(address(usdc), "pt_paused", 100e6);
         vm.stopPrank();
     }
@@ -187,7 +194,7 @@ contract TakumiPayPointDepositTest is Test {
         vm.stopPrank();
 
         vm.prank(user2);
-        vm.expectRevert("Not authorized: only owner/admin");
+        vm.expectRevert(TakumiWallet.NotAdminOrOwner.selector);
         wallet.getPointDepositByRef("pt_auth1");
     }
 
@@ -274,7 +281,7 @@ contract TakumiPayPointDepositTest is Test {
 
     function test_AddAllowedPointToken_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.addAllowedPointToken(address(usdt));
     }
 
@@ -284,7 +291,7 @@ contract TakumiPayPointDepositTest is Test {
     }
 
     function test_AddAllowedPointToken_RevertIf_ZeroAddress() public {
-        vm.expectRevert("Invalid token address");
+        vm.expectRevert(TakumiWallet.ZeroAddress.selector);
         wallet.addAllowedPointToken(address(0));
     }
 
@@ -301,7 +308,7 @@ contract TakumiPayPointDepositTest is Test {
 
     function test_RemoveAllowedPointToken_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.removeAllowedPointToken(address(usdc));
     }
 
@@ -336,7 +343,7 @@ contract TakumiPayPointDepositTest is Test {
 
     function test_SetPointDepositsPaused_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.setPointDepositsPaused(true);
     }
 

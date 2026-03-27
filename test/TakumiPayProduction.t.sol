@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../src/TakumiPay.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 contract MockERC20 is ERC20 {
     constructor(string memory name, string memory symbol) ERC20(name, symbol) {}
@@ -58,7 +59,13 @@ contract TakumiPayProductionTest is Test {
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
 
-        wallet = new TakumiWallet();
+        TakumiWallet implementation = new TakumiWallet();
+        ERC1967Proxy proxy = new ERC1967Proxy(
+            address(implementation),
+            abi.encodeCall(TakumiWallet.initialize, (owner))
+        );
+        wallet = TakumiWallet(payable(address(proxy)));
+
         usdc = new MockERC20("USD Coin", "USDC");
         usdt = new MockERC20("Tether USD", "USDT");
 
@@ -91,7 +98,7 @@ contract TakumiPayProductionTest is Test {
 
     function test_SetPaused_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.setPaused(true);
     }
 
@@ -99,7 +106,7 @@ contract TakumiPayProductionTest is Test {
         wallet.setPaused(true);
         vm.startPrank(user1);
         usdc.approve(address(wallet), 100e6);
-        vm.expectRevert("Contract is paused");
+        vm.expectRevert(TakumiWallet.ContractPaused.selector);
         wallet.createTransaction("b1", 1, "v1", address(usdc), "ref1", 100e6);
         vm.stopPrank();
     }
@@ -108,7 +115,7 @@ contract TakumiPayProductionTest is Test {
         wallet.setPaused(true);
         vm.startPrank(user1);
         usdc.approve(address(wallet), 100e6);
-        vm.expectRevert("Contract is paused");
+        vm.expectRevert(TakumiWallet.ContractPaused.selector);
         wallet.depositPoints(address(usdc), "pt1", 100e6);
         vm.stopPrank();
     }
@@ -119,7 +126,7 @@ contract TakumiPayProductionTest is Test {
         params[0] = TakumiWallet.TransactionParams("b1", 1, "v1", address(usdc), "ref1", 100e6);
         vm.startPrank(user1);
         usdc.approve(address(wallet), 100e6);
-        vm.expectRevert("Contract is paused");
+        vm.expectRevert(TakumiWallet.ContractPaused.selector);
         wallet.createTransactionBatch(params);
         vm.stopPrank();
     }
@@ -139,7 +146,7 @@ contract TakumiPayProductionTest is Test {
 
     function test_SetMaxTransactionAmount_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.setMaxTransactionAmount(address(usdc), 500e6);
     }
 
@@ -288,7 +295,7 @@ contract TakumiPayProductionTest is Test {
 
     function test_SetWithdrawalDelay_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.setWithdrawalDelay(1 days);
     }
 
@@ -431,12 +438,12 @@ contract TakumiPayProductionTest is Test {
         usdt.mint(address(wallet), 100e6);
 
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.recoverToken(address(usdt), user1, 100e6);
     }
 
     function test_RecoverToken_RevertIf_ZeroAddress() public {
-        vm.expectRevert("Invalid recipient");
+        vm.expectRevert(TakumiWallet.ZeroAddress.selector);
         wallet.recoverToken(address(usdt), address(0), 100e6);
     }
 
@@ -447,7 +454,7 @@ contract TakumiPayProductionTest is Test {
 
         vm.startPrank(user1);
         usdc.approve(address(wallet), 100e6);
-        vm.expectRevert("Contract is paused");
+        vm.expectRevert(TakumiWallet.ContractPaused.selector);
         wallet.depositPoints(address(usdc), "pt1", 100e6);
         vm.stopPrank();
 
@@ -455,7 +462,7 @@ contract TakumiPayProductionTest is Test {
         wallet.setPointDepositsPaused(true);
 
         vm.startPrank(user1);
-        vm.expectRevert("Point deposits are paused");
+        vm.expectRevert(TakumiWallet.PointDepositsPaused.selector);
         wallet.depositPoints(address(usdc), "pt1", 100e6);
         vm.stopPrank();
 
@@ -497,12 +504,12 @@ contract TakumiPayProductionTest is Test {
 
     function test_TransferOwnership_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert("Not authorized: only owner");
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
         wallet.transferOwnership(user1);
     }
 
     function test_TransferOwnership_RevertIf_ZeroAddress() public {
-        vm.expectRevert("Invalid owner address");
+        vm.expectRevert(TakumiWallet.ZeroAddress.selector);
         wallet.transferOwnership(address(0));
     }
 
@@ -510,7 +517,7 @@ contract TakumiPayProductionTest is Test {
         wallet.transferOwnership(user2);
 
         vm.prank(user1);
-        vm.expectRevert("Not pending owner");
+        vm.expectRevert(TakumiWallet.NotPendingOwner.selector);
         wallet.acceptOwnership();
     }
 
@@ -522,7 +529,7 @@ contract TakumiPayProductionTest is Test {
         assertEq(wallet.pendingOwner(), address(0));
 
         vm.prank(user1);
-        vm.expectRevert("Not pending owner");
+        vm.expectRevert(TakumiWallet.NotPendingOwner.selector);
         wallet.acceptOwnership();
     }
 
@@ -679,7 +686,27 @@ contract TakumiPayProductionTest is Test {
     // ====== Security: addAdmin zero address ======
 
     function test_AddAdmin_RevertIf_ZeroAddress() public {
-        vm.expectRevert("Invalid admin address");
+        vm.expectRevert(TakumiWallet.ZeroAddress.selector);
         wallet.addAdmin(address(0));
+    }
+
+    // ====== Upgradeability ======
+
+    function test_Version_Returns_Current() public view {
+        assertEq(wallet.version(), "1.0.0");
+    }
+
+    function test_UpgradeToAndCall_RevertIf_NotOwner() public {
+        TakumiWallet newImpl = new TakumiWallet();
+        vm.prank(user1);
+        vm.expectRevert(TakumiWallet.NotOwner.selector);
+        wallet.upgradeToAndCall(address(newImpl), "");
+    }
+
+    function test_UpgradeToAndCall_Owner_Succeeds() public {
+        TakumiWallet newImpl = new TakumiWallet();
+        wallet.upgradeToAndCall(address(newImpl), "");
+        // State is preserved after upgrade
+        assertEq(wallet.owner(), owner);
     }
 }

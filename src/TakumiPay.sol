@@ -1,11 +1,18 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract TakumiWallet is ReentrancyGuard {
+/// @title TakumiWallet
+/// @notice Payment contract supporting ERC20 + native token transactions and point deposits.
+///         Deployed behind a UUPS proxy for upgradeability.
+/// @dev Storage layout must never be reordered between upgrades. Append new slots only.
+///      Storage gap __gap reserves 50 slots for future base-contract extensions.
+contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
     using SafeERC20 for IERC20;
 
     // ====== Roles ======
@@ -95,6 +102,11 @@ contract TakumiWallet is ReentrancyGuard {
     mapping(address => uint256) private allowedPointTokenListIndex; // 1-based index for O(1) removal
     bool public pointDepositsPaused;
 
+    // ====== Storage Gap ======
+    // Reserve 50 slots for future upgrades. Decrement when adding new state variables.
+
+    uint256[50] private __gap;
+
     // ====== Events ======
 
     event TransactionCreated(
@@ -138,45 +150,79 @@ contract TakumiWallet is ReentrancyGuard {
     event PointDepositsPausedToggled(bool paused);
     event OwnershipTransferInitiated(address indexed currentOwner, address indexed pendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event Upgraded(address indexed implementation);
+
+    // ====== Errors ======
+
+    error NotOwner();
+    error NotAdminOrOwner();
+    error ContractPaused();
+    error PointDepositsPaused();
+    error ZeroAddress();
+    error ZeroAmount();
+    error AlreadyOwner();
+    error NotPendingOwner();
 
     // ====== Modifiers ======
 
     modifier onlyOwner() {
-        require(msg.sender == owner, "Not authorized: only owner");
+        if (msg.sender != owner) revert NotOwner();
         _;
     }
 
     modifier onlyAdminOrOwner() {
-        require(msg.sender == owner || admins[msg.sender], "Not authorized: only owner/admin");
+        if (msg.sender != owner && !admins[msg.sender]) revert NotAdminOrOwner();
         _;
     }
 
     modifier whenNotPaused() {
-        require(!paused, "Contract is paused");
+        if (paused) revert ContractPaused();
         _;
     }
 
     modifier whenPointDepositsActive() {
-        require(!pointDepositsPaused, "Point deposits are paused");
+        if (pointDepositsPaused) revert PointDepositsPaused();
         _;
     }
 
+    // ====== Constructor / Initializer ======
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
-        owner = msg.sender;
+        _disableInitializers();
+    }
+
+    /// @notice Initializes the proxy. Must be called exactly once after deployment.
+    /// @param initialOwner Address that will own the contract.
+    function initialize(address initialOwner) external initializer {
+        if (initialOwner == address(0)) revert ZeroAddress();
+        __ReentrancyGuard_init();
+        __UUPSUpgradeable_init();
+        owner = initialOwner;
+    }
+
+    // ====== UUPS Upgrade Authorization ======
+
+    /// @dev Only the owner may authorize an implementation upgrade.
+    function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
+
+    /// @notice Returns the current implementation version string.
+    function version() external pure returns (string memory) {
+        return "1.0.0";
     }
 
     // ====== Ownership Transfer (two-step pattern) ======
     // Prevents permanently losing the contract to a wrong address.
 
     function transferOwnership(address newOwner) external onlyOwner {
-        require(newOwner != address(0), "Invalid owner address");
-        require(newOwner != owner, "Already owner");
+        if (newOwner == address(0)) revert ZeroAddress();
+        if (newOwner == owner) revert AlreadyOwner();
         pendingOwner = newOwner;
         emit OwnershipTransferInitiated(owner, newOwner);
     }
 
     function acceptOwnership() external {
-        require(msg.sender == pendingOwner, "Not pending owner");
+        if (msg.sender != pendingOwner) revert NotPendingOwner();
         address previousOwner = owner;
         owner = pendingOwner;
         pendingOwner = address(0);
@@ -336,13 +382,13 @@ contract TakumiWallet is ReentrancyGuard {
     // For routine withdrawals, prefer queueWithdrawal + executeWithdrawal.
 
     function withdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
-        require(to != address(0), "Invalid recipient");
-        require(amount > 0, "Amount must be greater than 0");
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
         _doWithdraw(token, to, amount);
     }
 
     function withdrawAll(address token, address to) external onlyOwner nonReentrant {
-        require(to != address(0), "Invalid recipient");
+        if (to == address(0)) revert ZeroAddress();
         uint256 balance = token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
         require(balance > 0, "No balance");
         _doWithdraw(token, to, balance);
@@ -368,8 +414,8 @@ contract TakumiWallet is ReentrancyGuard {
     }
 
     function queueWithdrawal(address token, address to, uint256 amount) external onlyOwner returns (bytes32) {
-        require(to != address(0), "Invalid recipient");
-        require(amount > 0, "Amount must be greater than 0");
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
 
         withdrawalNonce += 1;
         bytes32 withdrawalId = keccak256(abi.encodePacked(token, to, amount, block.timestamp, withdrawalNonce));
@@ -413,8 +459,8 @@ contract TakumiWallet is ReentrancyGuard {
     // ====== Token Recovery ======
 
     function recoverToken(address token, address to, uint256 amount) external onlyOwner nonReentrant {
-        require(to != address(0), "Invalid recipient");
-        require(amount > 0, "Amount must be greater than 0");
+        if (to == address(0)) revert ZeroAddress();
+        if (amount == 0) revert ZeroAmount();
         if (token == address(0)) {
             require(address(this).balance >= amount, "Insufficient ETH balance");
             (bool ok,) = payable(to).call{value: amount}("");
@@ -431,15 +477,10 @@ contract TakumiWallet is ReentrancyGuard {
         emit NativeDeposit(msg.sender, msg.value);
     }
 
-    // Revert on calls with unknown function selectors to prevent accidental ETH acceptance
-    fallback() external {
-        revert("Unknown function");
-    }
-
     // ====== Admin Management ======
 
     function addAdmin(address admin) external onlyOwner {
-        require(admin != address(0), "Invalid admin address");
+        if (admin == address(0)) revert ZeroAddress();
         require(!admins[admin], "Already admin");
         admins[admin] = true;
         adminList.push(admin);
@@ -636,7 +677,7 @@ contract TakumiWallet is ReentrancyGuard {
     // ====== Point Token Whitelist Management ======
 
     function addAllowedPointToken(address token) external onlyOwner {
-        require(token != address(0), "Invalid token address");
+        if (token == address(0)) revert ZeroAddress();
         require(!allowedPointTokens[token], "Token already allowed");
         allowedPointTokens[token] = true;
         allowedPointTokenList.push(token);
