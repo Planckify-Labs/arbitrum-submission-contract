@@ -3,15 +3,18 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract TakumiWallet {
+contract TakumiWallet is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // ====== Roles ======
 
     address public owner;
+    address public pendingOwner; // two-step ownership transfer
     mapping(address => bool) private admins;
     address[] private adminList;
+    mapping(address => uint256) private adminListIndex; // 1-based index for O(1) removal
 
     // ====== Global Pause ======
 
@@ -26,6 +29,11 @@ contract TakumiWallet {
     uint256 public withdrawalDelay;
     uint256 public constant MAX_WITHDRAWAL_DELAY = 7 days;
     uint256 private withdrawalNonce;
+
+    // ====== Input Validation ======
+
+    uint256 public constant MAX_STRING_LENGTH = 256;
+    uint256 public constant MAX_PAGINATION_LIMIT = 500;
 
     struct WithdrawalRequest {
         address token;
@@ -44,7 +52,7 @@ contract TakumiWallet {
 
     struct Transaction {
         address walletAddress;
-        address tokenAddress;       // address(0) = native token (ETH, MATIC, etc.)
+        address tokenAddress; // address(0) = native token (ETH, MATIC, etc.)
         string bookingId;
         uint256 exchangeRateId;
         string productVariantId;
@@ -84,6 +92,7 @@ contract TakumiWallet {
 
     mapping(address => bool) public allowedPointTokens;
     address[] private allowedPointTokenList;
+    mapping(address => uint256) private allowedPointTokenListIndex; // 1-based index for O(1) removal
     bool public pointDepositsPaused;
 
     // ====== Events ======
@@ -127,6 +136,8 @@ contract TakumiWallet {
     event PointTokenAdded(address indexed token);
     event PointTokenRemoved(address indexed token);
     event PointDepositsPausedToggled(bool paused);
+    event OwnershipTransferInitiated(address indexed currentOwner, address indexed pendingOwner);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
     // ====== Modifiers ======
 
@@ -137,11 +148,6 @@ contract TakumiWallet {
 
     modifier onlyAdminOrOwner() {
         require(msg.sender == owner || admins[msg.sender], "Not authorized: only owner/admin");
-        _;
-    }
-
-    modifier onlyUser(address user) {
-        require(msg.sender == user, "Not authorized: only user");
         _;
     }
 
@@ -157,6 +163,28 @@ contract TakumiWallet {
 
     constructor() {
         owner = msg.sender;
+    }
+
+    // ====== Ownership Transfer (two-step pattern) ======
+    // Prevents permanently losing the contract to a wrong address.
+
+    function transferOwnership(address newOwner) external onlyOwner {
+        require(newOwner != address(0), "Invalid owner address");
+        require(newOwner != owner, "Already owner");
+        pendingOwner = newOwner;
+        emit OwnershipTransferInitiated(owner, newOwner);
+    }
+
+    function acceptOwnership() external {
+        require(msg.sender == pendingOwner, "Not pending owner");
+        address previousOwner = owner;
+        owner = pendingOwner;
+        pendingOwner = address(0);
+        emit OwnershipTransferred(previousOwner, owner);
+    }
+
+    function cancelOwnershipTransfer() external onlyOwner {
+        pendingOwner = address(0);
     }
 
     // ====== Global Pause ======
@@ -182,7 +210,8 @@ contract TakumiWallet {
         address tokenAddress,
         string calldata refId,
         uint256 amount
-    ) external payable whenNotPaused {
+    ) external payable whenNotPaused nonReentrant {
+        _validateStrings(bookingId, productVariantId, refId);
         if (tokenAddress == address(0)) {
             require(msg.value == amount, "Incorrect amount sent");
         } else {
@@ -194,22 +223,33 @@ contract TakumiWallet {
 
     // ====== Batch Transaction Creation ======
 
-    function createTransactionBatch(TransactionParams[] calldata params) external payable whenNotPaused {
+    function createTransactionBatch(TransactionParams[] calldata params) external payable whenNotPaused nonReentrant {
         uint256 len = params.length;
         require(len > 0, "Empty batch");
         require(len <= 20, "Batch too large");
 
-        // Pre-compute expected native total and validate params
+        // Phase 1: Validate all params and compute expected ETH total
         uint256 totalNative = 0;
         for (uint256 i = 0; i < len; i++) {
             require(params[i].amount > 0, "Amount must be greater than 0");
+            _validateStrings(params[i].bookingId, params[i].productVariantId, params[i].refId);
+
+            // Check existing refIds before any transfers
+            require(refToTx[params[i].refId] == 0, "refId must be unique");
+
             if (params[i].tokenAddress == address(0)) {
                 totalNative += params[i].amount;
+            }
+
+            // Check spending limits upfront
+            uint256 maxAmt = maxTransactionAmount[params[i].tokenAddress];
+            if (maxAmt > 0) {
+                require(params[i].amount <= maxAmt, "Amount exceeds spending limit");
             }
         }
         require(msg.value == totalNative, "Incorrect ETH amount for batch");
 
-        // Check for intra-batch duplicate refIds (O(n^2), max 20 items)
+        // Phase 2: Check intra-batch duplicate refIds (O(n^2), max 20 items = max 190 iterations)
         for (uint256 i = 0; i < len; i++) {
             for (uint256 j = i + 1; j < len; j++) {
                 require(
@@ -217,16 +257,19 @@ contract TakumiWallet {
                     "Duplicate refId in batch"
                 );
             }
-            // Transfer ERC20 upfront before any state changes
+        }
+
+        // Phase 3: Execute all ERC20 transfers
+        for (uint256 i = 0; i < len; i++) {
             if (params[i].tokenAddress != address(0)) {
                 IERC20(params[i].tokenAddress).safeTransferFrom(msg.sender, address(this), params[i].amount);
             }
         }
 
-        // Record all transactions (ETH and ERC20 tokens are already in the contract)
+        // Phase 4: Record all transactions (state updates after all external calls)
         for (uint256 i = 0; i < len; i++) {
             TransactionParams calldata p = params[i];
-            _recordTransaction(msg.sender, p.bookingId, p.exchangeRateId, p.productVariantId, p.tokenAddress, p.refId, p.amount);
+            _recordTransactionUnchecked(msg.sender, p.bookingId, p.exchangeRateId, p.productVariantId, p.tokenAddress, p.refId, p.amount);
         }
     }
 
@@ -247,6 +290,19 @@ contract TakumiWallet {
             require(amount <= maxAmt, "Amount exceeds spending limit");
         }
 
+        _recordTransactionUnchecked(sender, bookingId, exchangeRateId, productVariantId, tokenAddress, refId, amount);
+    }
+
+    // Internal writer — assumes all validation already done (used by batch after pre-validation)
+    function _recordTransactionUnchecked(
+        address sender,
+        string calldata bookingId,
+        uint256 exchangeRateId,
+        string calldata productVariantId,
+        address tokenAddress,
+        string calldata refId,
+        uint256 amount
+    ) internal {
         txCounter += 1;
         transactions[txCounter] = Transaction({
             walletAddress: sender,
@@ -276,14 +332,16 @@ contract TakumiWallet {
     }
 
     // ====== Withdrawals (ERC20 + Native) ======
+    // Note: withdraw/withdrawAll bypass the timelock — for emergency use only.
+    // For routine withdrawals, prefer queueWithdrawal + executeWithdrawal.
 
-    function withdraw(address token, address to, uint256 amount) external onlyOwner {
+    function withdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         require(to != address(0), "Invalid recipient");
         require(amount > 0, "Amount must be greater than 0");
         _doWithdraw(token, to, amount);
     }
 
-    function withdrawAll(address token, address to) external onlyOwner {
+    function withdrawAll(address token, address to) external onlyOwner nonReentrant {
         require(to != address(0), "Invalid recipient");
         uint256 balance = token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
         require(balance > 0, "No balance");
@@ -293,7 +351,7 @@ contract TakumiWallet {
     function _doWithdraw(address token, address to, uint256 amount) internal {
         if (token == address(0)) {
             require(address(this).balance >= amount, "Insufficient ETH balance");
-            (bool ok, ) = payable(to).call{value: amount}("");
+            (bool ok,) = payable(to).call{value: amount}("");
             require(ok, "ETH transfer failed");
         } else {
             IERC20(token).safeTransfer(to, amount);
@@ -330,13 +388,14 @@ contract TakumiWallet {
         return withdrawalId;
     }
 
-    function executeWithdrawal(bytes32 withdrawalId) external onlyOwner {
+    function executeWithdrawal(bytes32 withdrawalId) external onlyOwner nonReentrant {
         WithdrawalRequest storage req = withdrawalRequests[withdrawalId];
         require(req.unlockTime > 0, "Withdrawal not found");
         require(!req.executed, "Already executed");
         require(!req.cancelled, "Already cancelled");
         require(block.timestamp >= req.unlockTime, "Timelock not expired");
 
+        // Effects before interactions (CEI pattern)
         req.executed = true;
         _doWithdraw(req.token, req.to, req.amount);
         emit WithdrawalExecuted(withdrawalId);
@@ -353,12 +412,12 @@ contract TakumiWallet {
 
     // ====== Token Recovery ======
 
-    function recoverToken(address token, address to, uint256 amount) external onlyOwner {
+    function recoverToken(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         require(to != address(0), "Invalid recipient");
         require(amount > 0, "Amount must be greater than 0");
         if (token == address(0)) {
             require(address(this).balance >= amount, "Insufficient ETH balance");
-            (bool ok, ) = payable(to).call{value: amount}("");
+            (bool ok,) = payable(to).call{value: amount}("");
             require(ok, "ETH transfer failed");
         } else {
             IERC20(token).safeTransfer(to, amount);
@@ -372,24 +431,37 @@ contract TakumiWallet {
         emit NativeDeposit(msg.sender, msg.value);
     }
 
-    fallback() external payable {
-        if (msg.value > 0) {
-            emit NativeDeposit(msg.sender, msg.value);
-        }
+    // Revert on calls with unknown function selectors to prevent accidental ETH acceptance
+    fallback() external {
+        revert("Unknown function");
     }
 
     // ====== Admin Management ======
 
     function addAdmin(address admin) external onlyOwner {
+        require(admin != address(0), "Invalid admin address");
         require(!admins[admin], "Already admin");
         admins[admin] = true;
         adminList.push(admin);
+        adminListIndex[admin] = adminList.length; // 1-based index
         emit AdminAdded(admin);
     }
 
     function removeAdmin(address admin) external onlyOwner {
         require(admins[admin], "Not an admin");
         admins[admin] = false;
+
+        // Swap-and-pop to keep array compact and avoid stale entries
+        uint256 idx = adminListIndex[admin] - 1; // convert to 0-based
+        uint256 lastIdx = adminList.length - 1;
+        if (idx != lastIdx) {
+            address last = adminList[lastIdx];
+            adminList[idx] = last;
+            adminListIndex[last] = idx + 1; // update 1-based index
+        }
+        adminList.pop();
+        delete adminListIndex[admin];
+
         emit AdminRemoved(admin);
     }
 
@@ -403,15 +475,26 @@ contract TakumiWallet {
 
     // ====== Transaction View Functions ======
 
-    function getUserTransactions(uint256 offset, uint256 limit) external view onlyUser(msg.sender) returns (Transaction[] memory) {
+    function getUserTransactions(uint256 offset, uint256 limit) external view returns (Transaction[] memory) {
+        require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
         return _paginateTx(userTransactions[msg.sender], offset, limit);
     }
 
-    function getTransactionsByAddress(address user, uint256 offset, uint256 limit) external view onlyAdminOrOwner returns (Transaction[] memory) {
+    function getTransactionsByAddress(address user, uint256 offset, uint256 limit)
+        external
+        view
+        onlyAdminOrOwner
+        returns (Transaction[] memory)
+    {
+        require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
         return _paginateTx(userTransactions[user], offset, limit);
     }
 
-    function _paginateTx(uint256[] storage txIds, uint256 offset, uint256 limit) internal view returns (Transaction[] memory) {
+    function _paginateTx(uint256[] storage txIds, uint256 offset, uint256 limit)
+        internal
+        view
+        returns (Transaction[] memory)
+    {
         uint256 total = txIds.length;
         if (offset >= total) return new Transaction[](0);
         uint256 size = _min(limit, total - offset);
@@ -432,14 +515,22 @@ contract TakumiWallet {
         return userTransactions[user].length;
     }
 
-    function getTransactionsInRange(uint256 start, uint256 end, uint256 offset, uint256 limit) external view onlyAdminOrOwner returns (Transaction[] memory) {
-        Transaction[] memory temp = new Transaction[](txCounter);
-        uint256 count = 0;
+    // Warning: this function iterates all transactions and should only be called off-chain.
+    // Enforce a hard cap on `limit` to prevent excessive memory allocation.
+    function getTransactionsInRange(uint256 start, uint256 end, uint256 offset, uint256 limit)
+        external
+        view
+        onlyAdminOrOwner
+        returns (Transaction[] memory)
+    {
+        require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
+        require(start <= end, "Invalid range");
 
+        // First pass: count matching transactions to size the temp array
+        uint256 count = 0;
         for (uint256 i = 1; i <= txCounter; i++) {
-            Transaction memory txData = transactions[i];
-            if (txData.timestamp >= start && txData.timestamp <= end) {
-                temp[count] = txData;
+            uint256 ts = transactions[i].timestamp;
+            if (ts >= start && ts <= end) {
                 count++;
             }
         }
@@ -447,22 +538,36 @@ contract TakumiWallet {
         if (offset >= count) return new Transaction[](0);
         uint256 size = _min(limit, count - offset);
         Transaction[] memory result = new Transaction[](size);
-        for (uint256 j = 0; j < size; j++) {
-            result[j] = temp[offset + j];
+
+        // Second pass: fill result with pagination
+        uint256 matched = 0;
+        uint256 filled = 0;
+        for (uint256 i = 1; i <= txCounter && filled < size; i++) {
+            Transaction memory txData = transactions[i];
+            if (txData.timestamp >= start && txData.timestamp <= end) {
+                if (matched >= offset) {
+                    result[filled] = txData;
+                    filled++;
+                }
+                matched++;
+            }
         }
+
         return result;
     }
 
     // ====== Point Deposit Functions ======
 
-    function depositPoints(
-        address tokenAddress,
-        string calldata refId,
-        uint256 amount
-    ) external whenNotPaused whenPointDepositsActive {
+    function depositPoints(address tokenAddress, string calldata refId, uint256 amount)
+        external
+        whenNotPaused
+        whenPointDepositsActive
+        nonReentrant
+    {
         require(allowedPointTokens[tokenAddress], "Token not allowed for point deposits");
         require(pointRefToDeposit[refId] == 0, "refId already used");
         require(amount > 0, "Amount must be greater than 0");
+        require(bytes(refId).length > 0 && bytes(refId).length <= MAX_STRING_LENGTH, "Invalid refId length");
 
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
 
@@ -478,29 +583,34 @@ contract TakumiWallet {
         userPointDeposits[msg.sender].push(pointDepositCounter);
         pointRefToDeposit[refId] = pointDepositCounter;
 
-        emit PointDepositCreated(
-            pointDepositCounter,
-            msg.sender,
-            tokenAddress,
-            refId,
-            amount,
-            block.timestamp
-        );
+        emit PointDepositCreated(pointDepositCounter, msg.sender, tokenAddress, refId, amount, block.timestamp);
     }
 
     // ====== Point Deposit View Functions ======
 
-    function getPointDepositByRef(string calldata refId) external view onlyAdminOrOwner returns (PointDeposit memory) {
+    function getPointDepositByRef(string calldata refId)
+        external
+        view
+        onlyAdminOrOwner
+        returns (PointDeposit memory)
+    {
         uint256 depositId = pointRefToDeposit[refId];
         require(depositId != 0, "Point deposit not found");
         return pointDeposits[depositId];
     }
 
-    function getPointDepositsByAddress(address user, uint256 offset, uint256 limit) external view onlyAdminOrOwner returns (PointDeposit[] memory) {
+    function getPointDepositsByAddress(address user, uint256 offset, uint256 limit)
+        external
+        view
+        onlyAdminOrOwner
+        returns (PointDeposit[] memory)
+    {
+        require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
         return _paginateDeposit(userPointDeposits[user], offset, limit);
     }
 
-    function getUserPointDeposits(uint256 offset, uint256 limit) external view onlyUser(msg.sender) returns (PointDeposit[] memory) {
+    function getUserPointDeposits(uint256 offset, uint256 limit) external view returns (PointDeposit[] memory) {
+        require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
         return _paginateDeposit(userPointDeposits[msg.sender], offset, limit);
     }
 
@@ -508,7 +618,11 @@ contract TakumiWallet {
         return userPointDeposits[user].length;
     }
 
-    function _paginateDeposit(uint256[] storage ids, uint256 offset, uint256 limit) internal view returns (PointDeposit[] memory) {
+    function _paginateDeposit(uint256[] storage ids, uint256 offset, uint256 limit)
+        internal
+        view
+        returns (PointDeposit[] memory)
+    {
         uint256 total = ids.length;
         if (offset >= total) return new PointDeposit[](0);
         uint256 size = _min(limit, total - offset);
@@ -526,12 +640,25 @@ contract TakumiWallet {
         require(!allowedPointTokens[token], "Token already allowed");
         allowedPointTokens[token] = true;
         allowedPointTokenList.push(token);
+        allowedPointTokenListIndex[token] = allowedPointTokenList.length; // 1-based index
         emit PointTokenAdded(token);
     }
 
     function removeAllowedPointToken(address token) external onlyOwner {
         require(allowedPointTokens[token], "Token not in whitelist");
         allowedPointTokens[token] = false;
+
+        // Swap-and-pop to keep array compact and avoid stale entries
+        uint256 idx = allowedPointTokenListIndex[token] - 1; // convert to 0-based
+        uint256 lastIdx = allowedPointTokenList.length - 1;
+        if (idx != lastIdx) {
+            address last = allowedPointTokenList[lastIdx];
+            allowedPointTokenList[idx] = last;
+            allowedPointTokenListIndex[last] = idx + 1; // update 1-based index
+        }
+        allowedPointTokenList.pop();
+        delete allowedPointTokenListIndex[token];
+
         emit PointTokenRemoved(token);
     }
 
@@ -554,5 +681,17 @@ contract TakumiWallet {
 
     function _min(uint256 a, uint256 b) internal pure returns (uint256) {
         return a < b ? a : b;
+    }
+
+    function _validateStrings(string calldata bookingId, string calldata productVariantId, string calldata refId)
+        internal
+        pure
+    {
+        require(bytes(bookingId).length > 0 && bytes(bookingId).length <= MAX_STRING_LENGTH, "Invalid bookingId length");
+        require(
+            bytes(productVariantId).length > 0 && bytes(productVariantId).length <= MAX_STRING_LENGTH,
+            "Invalid productVariantId length"
+        );
+        require(bytes(refId).length > 0 && bytes(refId).length <= MAX_STRING_LENGTH, "Invalid refId length");
     }
 }

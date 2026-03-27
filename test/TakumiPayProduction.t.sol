@@ -13,6 +13,35 @@ contract MockERC20 is ERC20 {
     }
 }
 
+/// @dev Malicious ERC20 that attempts reentrancy on transferFrom
+contract ReentrantERC20 is ERC20 {
+    address public target;
+    bool public attacking;
+
+    constructor() ERC20("Reentrant", "REENT") {}
+
+    function setTarget(address _target) external {
+        target = _target;
+    }
+
+    function setAttacking(bool _attacking) external {
+        attacking = _attacking;
+    }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
+
+    function transferFrom(address from, address to, uint256 amount) public override returns (bool) {
+        if (attacking && target != address(0)) {
+            attacking = false;
+            // Attempt reentrancy into createTransaction
+            TakumiWallet(payable(target)).createTransaction("b_reentry", 1, "v_reentry", address(this), "ref_reentry", amount);
+        }
+        return super.transferFrom(from, to, amount);
+    }
+}
+
 contract TakumiPayProductionTest is Test {
     TakumiWallet public wallet;
     MockERC20 public usdc;
@@ -136,7 +165,7 @@ contract TakumiPayProductionTest is Test {
     }
 
     function test_SpendingLimit_ZeroMeansNoLimit() public {
-        wallet.setMaxTransactionAmount(address(usdc), 0); // explicitly no limit
+        wallet.setMaxTransactionAmount(address(usdc), 0);
 
         vm.startPrank(user1);
         usdc.approve(address(wallet), 5000e6);
@@ -272,7 +301,8 @@ contract TakumiPayProductionTest is Test {
         wallet.setWithdrawalDelay(1 days);
         bytes32 wId = wallet.queueWithdrawal(address(usdc), owner, 100e6);
 
-        (address token, address to, uint256 amount, uint256 unlockTime, bool executed, bool cancelled) = wallet.withdrawalRequests(wId);
+        (address token, address to, uint256 amount, uint256 unlockTime, bool executed, bool cancelled) =
+            wallet.withdrawalRequests(wId);
         assertEq(token, address(usdc));
         assertEq(to, owner);
         assertEq(amount, 100e6);
@@ -371,7 +401,6 @@ contract TakumiPayProductionTest is Test {
     // ====== Token Recovery ======
 
     function test_RecoverToken_ERC20_Success() public {
-        // Simulate accidental ERC20 send
         usdt.mint(address(wallet), 500e6);
 
         wallet.recoverToken(address(usdt), owner, 500e6);
@@ -414,7 +443,6 @@ contract TakumiPayProductionTest is Test {
     // ====== Interaction: Global Pause vs Point Deposits Pause ======
 
     function test_BothPauses_Independent() public {
-        // Global pause blocks everything
         wallet.setPaused(true);
 
         vm.startPrank(user1);
@@ -423,7 +451,6 @@ contract TakumiPayProductionTest is Test {
         wallet.depositPoints(address(usdc), "pt1", 100e6);
         vm.stopPrank();
 
-        // Unpause global, pause point deposits
         wallet.setPaused(false);
         wallet.setPointDepositsPaused(true);
 
@@ -432,11 +459,227 @@ contract TakumiPayProductionTest is Test {
         wallet.depositPoints(address(usdc), "pt1", 100e6);
         vm.stopPrank();
 
-        // createTransaction should still work when only point deposits are paused
         vm.startPrank(user1);
         wallet.createTransaction("b1", 1, "v1", address(usdc), "tx_ref1", 100e6);
         vm.stopPrank();
 
         assertEq(wallet.txCounter(), 1);
+    }
+
+    // ====== Security: Two-Step Ownership Transfer ======
+
+    function test_TransferOwnership_TwoStep() public {
+        address newOwner = makeAddr("newOwner");
+
+        wallet.transferOwnership(newOwner);
+        assertEq(wallet.pendingOwner(), newOwner);
+        assertEq(wallet.owner(), owner); // owner unchanged until accepted
+
+        vm.prank(newOwner);
+        wallet.acceptOwnership();
+
+        assertEq(wallet.owner(), newOwner);
+        assertEq(wallet.pendingOwner(), address(0));
+    }
+
+    function test_TransferOwnership_EmitsEvents() public {
+        address newOwner = makeAddr("newOwner");
+
+        vm.expectEmit(true, true, false, false);
+        emit TakumiWallet.OwnershipTransferInitiated(owner, newOwner);
+        wallet.transferOwnership(newOwner);
+
+        vm.expectEmit(true, true, false, false);
+        emit TakumiWallet.OwnershipTransferred(owner, newOwner);
+        vm.prank(newOwner);
+        wallet.acceptOwnership();
+    }
+
+    function test_TransferOwnership_RevertIf_NotOwner() public {
+        vm.prank(user1);
+        vm.expectRevert("Not authorized: only owner");
+        wallet.transferOwnership(user1);
+    }
+
+    function test_TransferOwnership_RevertIf_ZeroAddress() public {
+        vm.expectRevert("Invalid owner address");
+        wallet.transferOwnership(address(0));
+    }
+
+    function test_AcceptOwnership_RevertIf_NotPending() public {
+        wallet.transferOwnership(user2);
+
+        vm.prank(user1);
+        vm.expectRevert("Not pending owner");
+        wallet.acceptOwnership();
+    }
+
+    function test_CancelOwnershipTransfer() public {
+        wallet.transferOwnership(user1);
+        assertEq(wallet.pendingOwner(), user1);
+
+        wallet.cancelOwnershipTransfer();
+        assertEq(wallet.pendingOwner(), address(0));
+
+        vm.prank(user1);
+        vm.expectRevert("Not pending owner");
+        wallet.acceptOwnership();
+    }
+
+    // ====== Security: Admin List Integrity After Removal ======
+
+    function test_RemoveAdmin_PrunesArray() public {
+        address admin2 = makeAddr("admin2");
+        address admin3 = makeAddr("admin3");
+
+        wallet.addAdmin(admin2);
+        wallet.addAdmin(admin3);
+
+        // Remove middle admin (admin)
+        wallet.removeAdmin(admin);
+
+        address[] memory activeAdmins = wallet.getAllAdmins();
+        assertEq(activeAdmins.length, 2);
+
+        // Verify removed admin is not in the list
+        for (uint256 i = 0; i < activeAdmins.length; i++) {
+            assertTrue(activeAdmins[i] != admin);
+        }
+
+        // Verify isAdmin returns false
+        assertFalse(wallet.isAdmin(admin));
+    }
+
+    function test_RemoveAdmin_LastElement() public {
+        // Remove the only admin
+        wallet.removeAdmin(admin);
+
+        address[] memory activeAdmins = wallet.getAllAdmins();
+        assertEq(activeAdmins.length, 0);
+    }
+
+    function test_AddAdmin_AfterRemove_ReuseSlot() public {
+        wallet.removeAdmin(admin);
+        // Re-adding same admin should work
+        wallet.addAdmin(admin);
+        assertTrue(wallet.isAdmin(admin));
+        assertEq(wallet.getAllAdmins().length, 1);
+    }
+
+    // ====== Security: Point Token List Integrity After Removal ======
+
+    function test_RemovePointToken_PrunesArray() public {
+        wallet.addAllowedPointToken(address(usdt));
+
+        wallet.removeAllowedPointToken(address(usdc));
+
+        address[] memory tokens = wallet.getAllowedPointTokens();
+        assertEq(tokens.length, 1);
+        assertEq(tokens[0], address(usdt));
+        assertFalse(wallet.isAllowedPointToken(address(usdc)));
+    }
+
+    function test_RemovePointToken_OnlyElement() public {
+        wallet.removeAllowedPointToken(address(usdc));
+
+        address[] memory tokens = wallet.getAllowedPointTokens();
+        assertEq(tokens.length, 0);
+    }
+
+    // ====== Security: Reentrancy Guard ======
+
+    function test_Reentrancy_BlockedOnCreateTransaction() public {
+        ReentrantERC20 reentrantToken = new ReentrantERC20();
+        reentrantToken.mint(user1, 1000e18);
+        reentrantToken.setTarget(address(wallet));
+        reentrantToken.setAttacking(true);
+
+        vm.startPrank(user1);
+        reentrantToken.approve(address(wallet), type(uint256).max);
+
+        // Attempt reentrancy — should revert due to ReentrancyGuard
+        vm.expectRevert();
+        wallet.createTransaction("b_attack", 1, "v_attack", address(reentrantToken), "ref_attack", 100e18);
+        vm.stopPrank();
+    }
+
+    // ====== Security: Fallback Revert ======
+
+    function test_Fallback_RevertsOnUnknownSelector() public {
+        // Calling with unknown selector should revert
+        (bool success,) = address(wallet).call(abi.encodeWithSignature("nonExistentFunction()"));
+        assertFalse(success);
+    }
+
+    function test_Receive_AcceptsNativeETH() public {
+        vm.deal(user1, 1 ether);
+        vm.prank(user1);
+        (bool success,) = address(wallet).call{value: 1 ether}("");
+        assertTrue(success);
+        assertEq(address(wallet).balance, 1 ether);
+    }
+
+    // ====== Security: String Length Validation ======
+
+    function test_CreateTransaction_RevertIf_EmptyRefId() public {
+        vm.startPrank(user1);
+        usdc.approve(address(wallet), 100e6);
+        vm.expectRevert("Invalid refId length");
+        wallet.createTransaction("b1", 1, "v1", address(usdc), "", 100e6);
+        vm.stopPrank();
+    }
+
+    function test_CreateTransaction_RevertIf_RefIdTooLong() public {
+        string memory longRefId = new string(257);
+        // Fill with 'a' characters
+        bytes memory longRefIdBytes = bytes(longRefId);
+        for (uint256 i = 0; i < 257; i++) {
+            longRefIdBytes[i] = "a";
+        }
+
+        vm.startPrank(user1);
+        usdc.approve(address(wallet), 100e6);
+        vm.expectRevert("Invalid refId length");
+        wallet.createTransaction("b1", 1, "v1", address(usdc), string(longRefIdBytes), 100e6);
+        vm.stopPrank();
+    }
+
+    function test_CreateTransaction_RevertIf_EmptyBookingId() public {
+        vm.startPrank(user1);
+        usdc.approve(address(wallet), 100e6);
+        vm.expectRevert("Invalid bookingId length");
+        wallet.createTransaction("", 1, "v1", address(usdc), "ref1", 100e6);
+        vm.stopPrank();
+    }
+
+    // ====== Security: Pagination Limit Cap ======
+
+    function test_GetUserTransactions_RevertIf_LimitTooLarge() public {
+        vm.prank(user1);
+        vm.expectRevert("Limit too large");
+        wallet.getUserTransactions(0, 501);
+    }
+
+    function test_GetUserPointDeposits_RevertIf_LimitTooLarge() public {
+        vm.prank(user1);
+        vm.expectRevert("Limit too large");
+        wallet.getUserPointDeposits(0, 501);
+    }
+
+    function test_GetTransactionsInRange_RevertIf_LimitTooLarge() public {
+        vm.expectRevert("Limit too large");
+        wallet.getTransactionsInRange(0, block.timestamp, 0, 501);
+    }
+
+    function test_GetTransactionsInRange_RevertIf_InvalidRange() public {
+        vm.expectRevert("Invalid range");
+        wallet.getTransactionsInRange(block.timestamp + 1, block.timestamp, 0, 10);
+    }
+
+    // ====== Security: addAdmin zero address ======
+
+    function test_AddAdmin_RevertIf_ZeroAddress() public {
+        vm.expectRevert("Invalid admin address");
+        wallet.addAdmin(address(0));
     }
 }
