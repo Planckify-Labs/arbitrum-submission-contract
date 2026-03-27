@@ -149,6 +149,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     event PointTokenRemoved(address indexed token);
     event PointDepositsPausedToggled(bool paused);
     event OwnershipTransferInitiated(address indexed currentOwner, address indexed pendingOwner);
+    event OwnershipTransferCancelled(address indexed cancelledPendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event Upgraded(address indexed implementation);
 
@@ -230,12 +231,14 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     }
 
     function cancelOwnershipTransfer() external onlyOwner {
+        address cancelled = pendingOwner;
         pendingOwner = address(0);
+        emit OwnershipTransferCancelled(cancelled);
     }
 
     // ====== Global Pause ======
 
-    function setPaused(bool _paused) external onlyOwner {
+    function setPaused(bool _paused) external onlyAdminOrOwner {
         paused = _paused;
         emit ContractPausedToggled(_paused);
     }
@@ -262,7 +265,12 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
             require(msg.value == amount, "Incorrect amount sent");
         } else {
             require(msg.value == 0, "ETH not required for ERC20");
+            uint256 balanceBefore = IERC20(tokenAddress).balanceOf(address(this));
             IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
+            require(
+                IERC20(tokenAddress).balanceOf(address(this)) - balanceBefore == amount,
+                "Fee-on-transfer tokens not supported"
+            );
         }
         _recordTransaction(msg.sender, bookingId, exchangeRateId, productVariantId, tokenAddress, refId, amount);
     }
@@ -308,7 +316,12 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         // Phase 3: Execute all ERC20 transfers
         for (uint256 i = 0; i < len; i++) {
             if (params[i].tokenAddress != address(0)) {
+                uint256 balanceBefore = IERC20(params[i].tokenAddress).balanceOf(address(this));
                 IERC20(params[i].tokenAddress).safeTransferFrom(msg.sender, address(this), params[i].amount);
+                require(
+                    IERC20(params[i].tokenAddress).balanceOf(address(this)) - balanceBefore == params[i].amount,
+                    "Fee-on-transfer tokens not supported"
+                );
             }
         }
 
@@ -378,17 +391,22 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     }
 
     // ====== Withdrawals (ERC20 + Native) ======
-    // Note: withdraw/withdrawAll bypass the timelock — for emergency use only.
-    // For routine withdrawals, prefer queueWithdrawal + executeWithdrawal.
+    // Note: withdraw/withdrawAll bypass the timelock and are only permitted when
+    // withdrawalDelay == 0. When a timelock is configured, use queueWithdrawal +
+    // executeWithdrawal for all withdrawals.
+
+    error TimelockActive();
 
     function withdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
+        if (withdrawalDelay > 0) revert TimelockActive();
         _doWithdraw(token, to, amount);
     }
 
     function withdrawAll(address token, address to) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
+        if (withdrawalDelay > 0) revert TimelockActive();
         uint256 balance = token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
         require(balance > 0, "No balance");
         _doWithdraw(token, to, balance);
@@ -416,6 +434,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function queueWithdrawal(address token, address to, uint256 amount) external onlyOwner returns (bytes32) {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
+        require(withdrawalDelay > 0, "Set a withdrawal delay before queuing");
 
         withdrawalNonce += 1;
         bytes32 withdrawalId = keccak256(abi.encodePacked(token, to, amount, block.timestamp, withdrawalNonce));
@@ -461,6 +480,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function recoverToken(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
+        if (withdrawalDelay > 0) revert TimelockActive();
         if (token == address(0)) {
             require(address(this).balance >= amount, "Insufficient ETH balance");
             (bool ok,) = payable(to).call{value: amount}("");
@@ -473,7 +493,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
 
     // ====== ETH Direct Deposit Handling ======
 
-    receive() external payable {
+    receive() external payable nonReentrant {
         emit NativeDeposit(msg.sender, msg.value);
     }
 
@@ -490,6 +510,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
 
     function removeAdmin(address admin) external onlyOwner {
         require(admins[admin], "Not an admin");
+        require(adminListIndex[admin] > 0, "Admin index inconsistency");
         admins[admin] = false;
 
         // Swap-and-pop to keep array compact and avoid stale entries
@@ -610,7 +631,12 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         require(amount > 0, "Amount must be greater than 0");
         require(bytes(refId).length > 0 && bytes(refId).length <= MAX_STRING_LENGTH, "Invalid refId length");
 
+        uint256 balanceBefore = IERC20(tokenAddress).balanceOf(address(this));
         IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
+        require(
+            IERC20(tokenAddress).balanceOf(address(this)) - balanceBefore == amount,
+            "Fee-on-transfer tokens not supported"
+        );
 
         pointDepositCounter += 1;
         pointDeposits[pointDepositCounter] = PointDeposit({
@@ -687,6 +713,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
 
     function removeAllowedPointToken(address token) external onlyOwner {
         require(allowedPointTokens[token], "Token not in whitelist");
+        require(allowedPointTokenListIndex[token] > 0, "Token index inconsistency");
         allowedPointTokens[token] = false;
 
         // Swap-and-pop to keep array compact and avoid stale entries
@@ -713,7 +740,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
 
     // ====== Point Deposit Pause Control ======
 
-    function setPointDepositsPaused(bool _paused) external onlyOwner {
+    function setPointDepositsPaused(bool _paused) external onlyAdminOrOwner {
         pointDepositsPaused = _paused;
         emit PointDepositsPausedToggled(_paused);
     }
