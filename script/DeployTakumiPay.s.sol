@@ -35,6 +35,18 @@ contract DeployTakumiPay is Script {
         console.log("Implementation:", address(implementation));
         console.log("Proxy (use this address):", proxy);
         console.log("Owner:", initialOwner);
+
+        // Persist a clean deployment record to deployments/<chainId>.json
+        string memory obj = "deployment";
+        vm.serializeUint(obj, "chainId", block.chainid);
+        vm.serializeAddress(obj, "proxy", proxy);
+        vm.serializeAddress(obj, "implementation", address(implementation));
+        vm.serializeAddress(obj, "owner", initialOwner);
+        string memory json = vm.serializeUint(obj, "deployedAt", block.timestamp);
+
+        string memory path = string.concat("deployments/", vm.toString(block.chainid), ".json");
+        vm.writeJson(json, path);
+        console.log("Deployment record written to:", path);
     }
 }
 
