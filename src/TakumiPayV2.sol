@@ -5,11 +5,11 @@ import "./TakumiPay.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
-/// @title TakumiWalletV2
+/// @title TakumiPayV2
 /// @notice V2 upgrade of TakumiWallet adding merchant payment functionality with EIP-712 signed quotes.
 /// @dev Inherits TakumiWallet (UUPS) and EIP712Upgradeable. New state is appended after parent storage.
 ///      The parent's 50-slot __gap remains untouched; V2 state lives in slots after the parent layout.
-contract TakumiWalletV2 is TakumiWallet, EIP712Upgradeable {
+contract TakumiPayV2 is TakumiWallet, EIP712Upgradeable {
     using ECDSA for bytes32;
     using SafeERC20 for IERC20;
 

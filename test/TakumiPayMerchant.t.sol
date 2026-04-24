@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import "../src/TakumiWalletV2.sol";
+import "../src/TakumiPayV2.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -19,7 +19,7 @@ contract MockUSDC is ERC20 {
 }
 
 contract TakumiWalletMerchantTest is Test {
-    TakumiWalletV2 public wallet;
+    TakumiPayV2 public wallet;
     MockUSDC public usdc;
 
     address public owner = address(0x1);
@@ -36,14 +36,14 @@ contract TakumiWalletMerchantTest is Test {
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), initData);
 
         // Upgrade to V2
-        TakumiWalletV2 implV2 = new TakumiWalletV2();
+        TakumiPayV2 implV2 = new TakumiPayV2();
         vm.prank(owner);
         TakumiWallet(payable(address(proxy))).upgradeToAndCall(
             address(implV2),
-            abi.encodeCall(TakumiWalletV2.initializeV2, (signer))
+            abi.encodeCall(TakumiPayV2.initializeV2, (signer))
         );
 
-        wallet = TakumiWalletV2(payable(address(proxy)));
+        wallet = TakumiPayV2(payable(address(proxy)));
 
         // Setup mock USDC
         usdc = new MockUSDC();
@@ -54,7 +54,7 @@ contract TakumiWalletMerchantTest is Test {
 
     // ====== Helpers ======
 
-    function _signQuote(TakumiWalletV2.QuoteCommitment memory quote)
+    function _signQuote(TakumiPayV2.QuoteCommitment memory quote)
         internal
         view
         returns (bytes memory)
@@ -81,7 +81,7 @@ contract TakumiWalletMerchantTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _signQuoteWithKey(TakumiWalletV2.QuoteCommitment memory quote, uint256 privateKey)
+    function _signQuoteWithKey(TakumiPayV2.QuoteCommitment memory quote, uint256 privateKey)
         internal
         view
         returns (bytes memory)
@@ -108,8 +108,8 @@ contract TakumiWalletMerchantTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _defaultQuote() internal view returns (TakumiWalletV2.QuoteCommitment memory) {
-        return TakumiWalletV2.QuoteCommitment({
+    function _defaultQuote() internal view returns (TakumiPayV2.QuoteCommitment memory) {
+        return TakumiPayV2.QuoteCommitment({
             refId: "test-ref-001",
             merchantId: "merchant-001",
             tokenAddress: address(usdc),
@@ -122,8 +122,8 @@ contract TakumiWalletMerchantTest is Test {
         });
     }
 
-    function _defaultNativeQuote() internal view returns (TakumiWalletV2.QuoteCommitment memory) {
-        return TakumiWalletV2.QuoteCommitment({
+    function _defaultNativeQuote() internal view returns (TakumiPayV2.QuoteCommitment memory) {
+        return TakumiPayV2.QuoteCommitment({
             refId: "native-ref-001",
             merchantId: "merchant-001",
             tokenAddress: address(0),
@@ -139,7 +139,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== processMerchantPayment: Happy Path (ERC-20) ======
 
     function test_processMerchantPayment_happyPath() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
 
         uint256 payerBefore = usdc.balanceOf(payer);
@@ -153,7 +153,7 @@ contract TakumiWalletMerchantTest is Test {
         assertEq(usdc.balanceOf(address(wallet)), walletBefore + quote.amount);
 
         // Payment stored
-        TakumiWalletV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("test-ref-001");
+        TakumiPayV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("test-ref-001");
         assertEq(payment.payer, payer);
         assertEq(payment.tokenAddress, address(usdc));
         assertEq(payment.amount, 10e6);
@@ -171,7 +171,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== processMerchantPayment: Native Token ======
 
     function test_processMerchantPayment_nativeToken() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultNativeQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultNativeQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.deal(payer, 10 ether);
@@ -182,7 +182,7 @@ contract TakumiWalletMerchantTest is Test {
 
         assertEq(address(wallet).balance, walletBefore + 1 ether);
 
-        TakumiWalletV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("native-ref-001");
+        TakumiPayV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("native-ref-001");
         assertEq(payment.payer, payer);
         assertEq(payment.tokenAddress, address(0));
         assertEq(payment.amount, 1 ether);
@@ -194,11 +194,11 @@ contract TakumiWalletMerchantTest is Test {
     // ====== processMerchantPayment: Emits Event ======
 
     function test_processMerchantPayment_emitsEvent() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.expectEmit(true, true, true, true);
-        emit TakumiWalletV2.MerchantPaymentProcessed(
+        emit TakumiPayV2.MerchantPaymentProcessed(
             "test-ref-001",
             "merchant-001",
             payer,
@@ -216,21 +216,21 @@ contract TakumiWalletMerchantTest is Test {
     // ====== Revert: QuoteExpired ======
 
     function test_revert_quoteExpired() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
 
         // Warp past expiry
         vm.warp(quote.expiresAt + 1);
 
         vm.prank(payer);
-        vm.expectRevert(TakumiWalletV2.QuoteExpired.selector);
+        vm.expectRevert(TakumiPayV2.QuoteExpired.selector);
         wallet.processMerchantPayment(quote, sig);
     }
 
     // ====== Revert: RefConsumed ======
 
     function test_revert_refConsumed() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.prank(payer);
@@ -238,43 +238,43 @@ contract TakumiWalletMerchantTest is Test {
 
         // Second call with same refId should revert
         vm.prank(payer);
-        vm.expectRevert(TakumiWalletV2.RefConsumed.selector);
+        vm.expectRevert(TakumiPayV2.RefConsumed.selector);
         wallet.processMerchantPayment(quote, sig);
     }
 
     // ====== Revert: BadQuote (wrong signer) ======
 
     function test_revert_badQuote_wrongSigner() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         uint256 wrongKey = 0xBEEF;
         bytes memory sig = _signQuoteWithKey(quote, wrongKey);
 
         vm.prank(payer);
-        vm.expectRevert(TakumiWalletV2.BadQuote.selector);
+        vm.expectRevert(TakumiPayV2.BadQuote.selector);
         wallet.processMerchantPayment(quote, sig);
     }
 
     // ====== Revert: FeeExceedsAmount ======
 
     function test_revert_feeExceedsAmount() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         quote.platformFeeAmount = quote.amount + 1; // fee > amount
         bytes memory sig = _signQuote(quote);
 
         vm.prank(payer);
-        vm.expectRevert(TakumiWalletV2.FeeExceedsAmount.selector);
+        vm.expectRevert(TakumiPayV2.FeeExceedsAmount.selector);
         wallet.processMerchantPayment(quote, sig);
     }
 
     // ====== Revert: NativeAmountMismatch ======
 
     function test_revert_nativeAmountMismatch() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultNativeQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultNativeQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.deal(payer, 10 ether);
         vm.prank(payer);
-        vm.expectRevert(TakumiWalletV2.NativeAmountMismatch.selector);
+        vm.expectRevert(TakumiPayV2.NativeAmountMismatch.selector);
         // Send wrong amount
         wallet.processMerchantPayment{value: 0.5 ether}(quote, sig);
     }
@@ -282,12 +282,12 @@ contract TakumiWalletMerchantTest is Test {
     // ====== Revert: UnexpectedNative ======
 
     function test_revert_unexpectedNative() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.deal(payer, 1 ether);
         vm.prank(payer);
-        vm.expectRevert(TakumiWalletV2.UnexpectedNative.selector);
+        vm.expectRevert(TakumiPayV2.UnexpectedNative.selector);
         // Send ETH with ERC-20 quote
         wallet.processMerchantPayment{value: 0.1 ether}(quote, sig);
     }
@@ -295,7 +295,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== Revert: Contract Paused ======
 
     function test_revert_processMerchantPayment_whenPaused() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.prank(owner);
@@ -310,7 +310,7 @@ contract TakumiWalletMerchantTest is Test {
 
     function test_sweepPlatformFees() public {
         // First create a payment to accrue fees
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
         vm.prank(payer);
         wallet.processMerchantPayment(quote, sig);
@@ -329,7 +329,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== sweepPlatformFees: Emits Event ======
 
     function test_sweepPlatformFees_emitsEvent() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
         vm.prank(payer);
         wallet.processMerchantPayment(quote, sig);
@@ -337,7 +337,7 @@ contract TakumiWalletMerchantTest is Test {
         address treasury = makeAddr("treasury");
 
         vm.expectEmit(true, true, false, true);
-        emit TakumiWalletV2.PlatformFeesSwept(address(usdc), treasury, 0.5e6);
+        emit TakumiPayV2.PlatformFeesSwept(address(usdc), treasury, 0.5e6);
 
         vm.prank(owner);
         wallet.sweepPlatformFees(address(usdc), treasury, 0.5e6);
@@ -348,13 +348,13 @@ contract TakumiWalletMerchantTest is Test {
     function test_revert_sweepPlatformFees_exceedsAccrued() public {
         // No fees accrued yet
         vm.prank(owner);
-        vm.expectRevert(TakumiWalletV2.FeeAmountInvalid.selector);
+        vm.expectRevert(TakumiPayV2.FeeAmountInvalid.selector);
         wallet.sweepPlatformFees(address(usdc), makeAddr("treasury"), 1);
     }
 
     function test_revert_sweepPlatformFees_zeroAmount() public {
         vm.prank(owner);
-        vm.expectRevert(TakumiWalletV2.FeeAmountInvalid.selector);
+        vm.expectRevert(TakumiPayV2.FeeAmountInvalid.selector);
         wallet.sweepPlatformFees(address(usdc), makeAddr("treasury"), 0);
     }
 
@@ -368,7 +368,7 @@ contract TakumiWalletMerchantTest is Test {
 
     function test_sweepMerchantBacking() public {
         // Create a payment so wallet holds funds
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
         vm.prank(payer);
         wallet.processMerchantPayment(quote, sig);
@@ -386,7 +386,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== sweepMerchantBacking: Emits Event ======
 
     function test_sweepMerchantBacking_emitsEvent() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
         vm.prank(payer);
         wallet.processMerchantPayment(quote, sig);
@@ -394,7 +394,7 @@ contract TakumiWalletMerchantTest is Test {
         address merchant = makeAddr("merchant");
 
         vm.expectEmit(true, true, false, true);
-        emit TakumiWalletV2.MerchantBackingSwept(address(usdc), merchant, 9.5e6);
+        emit TakumiPayV2.MerchantBackingSwept(address(usdc), merchant, 9.5e6);
 
         vm.prank(owner);
         wallet.sweepMerchantBacking(address(usdc), merchant, 9.5e6);
@@ -403,7 +403,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== sweepMerchantBacking: Native Token ======
 
     function test_sweepMerchantBacking_nativeToken() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultNativeQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultNativeQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.deal(payer, 10 ether);
@@ -427,7 +427,7 @@ contract TakumiWalletMerchantTest is Test {
 
     function test_revert_sweepMerchantBacking_zeroRecipient() public {
         vm.prank(owner);
-        vm.expectRevert(TakumiWalletV2.ZeroRecipient.selector);
+        vm.expectRevert(TakumiPayV2.ZeroRecipient.selector);
         wallet.sweepMerchantBacking(address(usdc), address(0), 1);
     }
 
@@ -446,7 +446,7 @@ contract TakumiWalletMerchantTest is Test {
         address newSigner = makeAddr("newSigner");
 
         vm.expectEmit(true, true, false, false);
-        emit TakumiWalletV2.BackendSignerRotated(signer, newSigner);
+        emit TakumiPayV2.BackendSignerRotated(signer, newSigner);
 
         vm.prank(owner);
         wallet.rotateBackendSigner(newSigner);
@@ -460,7 +460,7 @@ contract TakumiWalletMerchantTest is Test {
         wallet.rotateBackendSigner(newSignerAddr);
 
         // Quote signed by new signer should work
-        TakumiWalletV2.QuoteCommitment memory quote = TakumiWalletV2.QuoteCommitment({
+        TakumiPayV2.QuoteCommitment memory quote = TakumiPayV2.QuoteCommitment({
             refId: "rotated-ref-001",
             merchantId: "merchant-001",
             tokenAddress: address(usdc),
@@ -477,7 +477,7 @@ contract TakumiWalletMerchantTest is Test {
         wallet.processMerchantPayment(quote, newSig);
 
         // Quote signed by old signer should fail
-        TakumiWalletV2.QuoteCommitment memory quote2 = TakumiWalletV2.QuoteCommitment({
+        TakumiPayV2.QuoteCommitment memory quote2 = TakumiPayV2.QuoteCommitment({
             refId: "rotated-ref-002",
             merchantId: "merchant-001",
             tokenAddress: address(usdc),
@@ -491,13 +491,13 @@ contract TakumiWalletMerchantTest is Test {
         bytes memory oldSig = _signQuoteWithKey(quote2, signerKey);
 
         vm.prank(payer);
-        vm.expectRevert(TakumiWalletV2.BadQuote.selector);
+        vm.expectRevert(TakumiPayV2.BadQuote.selector);
         wallet.processMerchantPayment(quote2, oldSig);
     }
 
     function test_revert_rotateBackendSigner_zeroAddress() public {
         vm.prank(owner);
-        vm.expectRevert(TakumiWalletV2.ZeroSigner.selector);
+        vm.expectRevert(TakumiPayV2.ZeroSigner.selector);
         wallet.rotateBackendSigner(address(0));
     }
 
@@ -510,13 +510,13 @@ contract TakumiWalletMerchantTest is Test {
     // ====== getMerchantPaymentByRef ======
 
     function test_getMerchantPaymentByRef() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.prank(payer);
         wallet.processMerchantPayment(quote, sig);
 
-        TakumiWalletV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("test-ref-001");
+        TakumiPayV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("test-ref-001");
 
         assertEq(payment.payer, payer);
         assertEq(payment.tokenAddress, address(usdc));
@@ -531,7 +531,7 @@ contract TakumiWalletMerchantTest is Test {
     }
 
     function test_getMerchantPaymentByRef_returnsEmptyForUnknown() public view {
-        TakumiWalletV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("unknown-ref");
+        TakumiPayV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("unknown-ref");
         assertEq(payment.payer, address(0));
         assertEq(payment.amount, 0);
     }
@@ -576,7 +576,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== Sweep platform fees with native token ======
 
     function test_sweepPlatformFees_nativeToken() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultNativeQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultNativeQuote();
         bytes memory sig = _signQuote(quote);
 
         vm.deal(payer, 10 ether);
@@ -599,7 +599,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== Partial fee sweep ======
 
     function test_sweepPlatformFees_partialSweep() public {
-        TakumiWalletV2.QuoteCommitment memory quote = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote = _defaultQuote();
         bytes memory sig = _signQuote(quote);
         vm.prank(payer);
         wallet.processMerchantPayment(quote, sig);
@@ -624,12 +624,12 @@ contract TakumiWalletMerchantTest is Test {
     // ====== Multiple payments accumulate fees ======
 
     function test_multipleMerchantPayments_accumulateFees() public {
-        TakumiWalletV2.QuoteCommitment memory quote1 = _defaultQuote();
+        TakumiPayV2.QuoteCommitment memory quote1 = _defaultQuote();
         bytes memory sig1 = _signQuote(quote1);
         vm.prank(payer);
         wallet.processMerchantPayment(quote1, sig1);
 
-        TakumiWalletV2.QuoteCommitment memory quote2 = TakumiWalletV2.QuoteCommitment({
+        TakumiPayV2.QuoteCommitment memory quote2 = TakumiPayV2.QuoteCommitment({
             refId: "test-ref-002",
             merchantId: "merchant-002",
             tokenAddress: address(usdc),
@@ -650,7 +650,7 @@ contract TakumiWalletMerchantTest is Test {
     // ====== Zero fee payment works ======
 
     function test_processMerchantPayment_zeroFee() public {
-        TakumiWalletV2.QuoteCommitment memory quote = TakumiWalletV2.QuoteCommitment({
+        TakumiPayV2.QuoteCommitment memory quote = TakumiPayV2.QuoteCommitment({
             refId: "zero-fee-ref",
             merchantId: "merchant-001",
             tokenAddress: address(usdc),
@@ -668,7 +668,7 @@ contract TakumiWalletMerchantTest is Test {
 
         assertEq(wallet.platformFeeAccrued(address(usdc)), 0);
 
-        TakumiWalletV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("zero-fee-ref");
+        TakumiPayV2.MerchantPayment memory payment = wallet.getMerchantPaymentByRef("zero-fee-ref");
         assertEq(payment.amount, 10e6);
         assertEq(payment.platformFeeAmount, 0);
     }
