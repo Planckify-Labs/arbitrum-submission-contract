@@ -208,7 +208,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     /// @notice Returns the current implementation version string.
-    function version() external pure returns (string memory) {
+    function version() external pure virtual returns (string memory) {
         return "1.0.0";
     }
 
