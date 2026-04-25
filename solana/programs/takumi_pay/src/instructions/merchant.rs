@@ -4,7 +4,7 @@ use anchor_lang::solana_program::sysvar::instructions::{
 };
 use anchor_lang::system_program;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{self, Mint, TokenInterface, TokenAccount, TransferChecked};
 
 use crate::errors::TakumiPayError;
 use crate::state::*;
@@ -156,14 +156,14 @@ pub struct ProcessMerchantPaymentToken<'info> {
     )]
     pub platform_fee_account: Account<'info, PlatformFeeAccount>,
 
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
         mut,
         associated_token::mint = token_mint,
         associated_token::authority = payer,
     )]
-    pub payer_token_account: Account<'info, TokenAccount>,
+    pub payer_token_account: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
         init_if_needed,
@@ -171,13 +171,13 @@ pub struct ProcessMerchantPaymentToken<'info> {
         associated_token::mint = token_mint,
         associated_token::authority = config,
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     /// CHECK: Instructions sysvar for Ed25519 signature verification.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::id())]
     pub instructions_sysvar: AccountInfo<'info>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -207,14 +207,16 @@ pub fn handle_process_merchant_payment_token(
         &message,
     )?;
 
-    let cpi_accounts = Transfer {
+    let cpi_accounts = TransferChecked {
         from: ctx.accounts.payer_token_account.to_account_info(),
         to: ctx.accounts.vault_token_account.to_account_info(),
         authority: ctx.accounts.payer.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
     };
-    token::transfer(
+    token_interface::transfer_checked(
         CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts),
         params.amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     write_merchant_payment(

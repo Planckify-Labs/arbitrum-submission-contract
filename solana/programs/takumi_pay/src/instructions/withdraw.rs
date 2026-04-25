@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{self, Mint, TokenInterface, TokenAccount, TransferChecked};
 
 use crate::errors::TakumiPayError;
 use crate::state::*;
@@ -60,19 +60,19 @@ pub struct WithdrawToken<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
         mut,
         associated_token::mint = token_mint,
         associated_token::authority = config,
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     #[account(mut)]
-    pub recipient_token_account: Account<'info, TokenAccount>,
+    pub recipient_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn handle_withdraw_token(ctx: Context<WithdrawToken>, amount: u64) -> Result<()> {
@@ -86,18 +86,20 @@ pub fn handle_withdraw_token(ctx: Context<WithdrawToken>, amount: u64) -> Result
     let seeds: &[&[u8]] = &[CONFIG_SEED, &[config_bump]];
     let signer_seeds = &[seeds];
 
-    let cpi_accounts = Transfer {
+    let cpi_accounts = TransferChecked {
         from: ctx.accounts.vault_token_account.to_account_info(),
         to: ctx.accounts.recipient_token_account.to_account_info(),
         authority: ctx.accounts.config.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
     };
-    token::transfer(
+    token_interface::transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             cpi_accounts,
             signer_seeds,
         ),
         amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     emit!(WithdrawEvent {
@@ -299,19 +301,19 @@ pub struct ExecuteWithdrawalToken<'info> {
     #[account(
         constraint = token_mint.key() == withdrawal_request.token_mint,
     )]
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
         mut,
         associated_token::mint = token_mint,
         associated_token::authority = config,
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     #[account(mut)]
-    pub recipient_token_account: Account<'info, TokenAccount>,
+    pub recipient_token_account: InterfaceAccount<'info, TokenAccount>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
 }
 
 pub fn handle_execute_withdrawal_token(ctx: Context<ExecuteWithdrawalToken>) -> Result<()> {
@@ -328,18 +330,20 @@ pub fn handle_execute_withdrawal_token(ctx: Context<ExecuteWithdrawalToken>) -> 
     let seeds: &[&[u8]] = &[CONFIG_SEED, &[config_bump]];
     let signer_seeds = &[seeds];
 
-    let cpi_accounts = Transfer {
+    let cpi_accounts = TransferChecked {
         from: ctx.accounts.vault_token_account.to_account_info(),
         to: ctx.accounts.recipient_token_account.to_account_info(),
         authority: ctx.accounts.config.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
     };
-    token::transfer(
+    token_interface::transfer_checked(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
             cpi_accounts,
             signer_seeds,
         ),
         amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     emit!(WithdrawalExecuted {

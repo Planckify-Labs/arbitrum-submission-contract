@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::token_interface::{self, Mint, TokenInterface, TokenAccount, TransferChecked};
 
 use crate::errors::TakumiPayError;
 use crate::state::*;
@@ -133,14 +133,14 @@ pub struct CreateTransactionToken<'info> {
     )]
     pub ref_record: Account<'info, RefRecord>,
 
-    pub token_mint: Account<'info, Mint>,
+    pub token_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
         mut,
         associated_token::mint = token_mint,
         associated_token::authority = payer,
     )]
-    pub payer_token_account: Account<'info, TokenAccount>,
+    pub payer_token_account: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
         init_if_needed,
@@ -148,11 +148,11 @@ pub struct CreateTransactionToken<'info> {
         associated_token::mint = token_mint,
         associated_token::authority = config,
     )]
-    pub vault_token_account: Account<'info, TokenAccount>,
+    pub vault_token_account: InterfaceAccount<'info, TokenAccount>,
 
     pub spending_limit: Option<Account<'info, SpendingLimit>>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -165,14 +165,16 @@ pub fn handle_create_transaction_token(
     let mint_key = ctx.accounts.token_mint.key();
     check_spending_limit(&ctx.accounts.spending_limit, &ctx.accounts.config, &mint_key, params.amount)?;
 
-    let cpi_accounts = Transfer {
+    let cpi_accounts = TransferChecked {
         from: ctx.accounts.payer_token_account.to_account_info(),
         to: ctx.accounts.vault_token_account.to_account_info(),
         authority: ctx.accounts.payer.to_account_info(),
+        mint: ctx.accounts.token_mint.to_account_info(),
     };
-    token::transfer(
+    token_interface::transfer_checked(
         CpiContext::new(ctx.accounts.token_program.to_account_info(), cpi_accounts),
         params.amount,
+        ctx.accounts.token_mint.decimals,
     )?;
 
     let config = &mut ctx.accounts.config;
