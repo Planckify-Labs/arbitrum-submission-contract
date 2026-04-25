@@ -1,16 +1,186 @@
 use anchor_lang::prelude::*;
 
-declare_id!("9ZtzMfw1ra616vsdmKzzh2ebrJ779djXb9goTiSjtnSt");
+declare_id!("6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy");
+
+pub mod errors;
+pub mod instructions;
+pub mod state;
+
+use instructions::*;
+use state::*;
 
 #[program]
 pub mod takumi_pay {
     use super::*;
 
-    pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
-        msg!("Greetings from: {:?}", ctx.program_id);
-        Ok(())
+    // ── Initialize ─────────────────────────────────────────────────────
+
+    pub fn initialize(ctx: Context<Initialize>, backend_signer: Pubkey) -> Result<()> {
+        instructions::admin::handle_initialize(ctx, backend_signer)
+    }
+
+    // ── Admin Management ───────────────────────────────────────────────
+
+    pub fn add_admin(ctx: Context<AddAdmin>) -> Result<()> {
+        instructions::admin::handle_add_admin(ctx)
+    }
+
+    pub fn remove_admin(ctx: Context<RemoveAdmin>) -> Result<()> {
+        instructions::admin::handle_remove_admin(ctx)
+    }
+
+    // ── Ownership Transfer ─────────────────────────────────────────────
+
+    pub fn transfer_ownership(ctx: Context<TransferOwnership>, new_owner: Pubkey) -> Result<()> {
+        instructions::admin::handle_transfer_ownership(ctx, new_owner)
+    }
+
+    pub fn accept_ownership(ctx: Context<AcceptOwnership>) -> Result<()> {
+        instructions::admin::handle_accept_ownership(ctx)
+    }
+
+    pub fn cancel_ownership_transfer(ctx: Context<CancelOwnershipTransfer>) -> Result<()> {
+        instructions::admin::handle_cancel_ownership_transfer(ctx)
+    }
+
+    // ── Configuration ──────────────────────────────────────────────────
+
+    pub fn set_paused(ctx: Context<SetPaused>, paused: bool) -> Result<()> {
+        instructions::config::handle_set_paused(ctx, paused)
+    }
+
+    pub fn set_spending_limit(ctx: Context<SetSpendingLimit>, max_amount: u64) -> Result<()> {
+        instructions::config::handle_set_spending_limit(ctx, max_amount)
+    }
+
+    pub fn rotate_backend_signer(
+        ctx: Context<RotateBackendSigner>,
+        new_signer: Pubkey,
+    ) -> Result<()> {
+        instructions::config::handle_rotate_backend_signer(ctx, new_signer)
+    }
+
+    pub fn set_point_deposits_paused(
+        ctx: Context<SetPointDepositsPaused>,
+        paused: bool,
+    ) -> Result<()> {
+        instructions::config::handle_set_point_deposits_paused(ctx, paused)
+    }
+
+    pub fn add_allowed_point_token(ctx: Context<AddAllowedPointToken>) -> Result<()> {
+        instructions::config::handle_add_allowed_point_token(ctx)
+    }
+
+    pub fn remove_allowed_point_token(ctx: Context<RemoveAllowedPointToken>) -> Result<()> {
+        instructions::config::handle_remove_allowed_point_token(ctx)
+    }
+
+    // ── Transactions ───────────────────────────────────────────────────
+
+    pub fn create_transaction_sol(
+        ctx: Context<CreateTransactionSol>,
+        params: CreateTransactionParams,
+    ) -> Result<()> {
+        instructions::transaction::handle_create_transaction_sol(ctx, params)
+    }
+
+    pub fn create_transaction_token(
+        ctx: Context<CreateTransactionToken>,
+        params: CreateTransactionParams,
+    ) -> Result<()> {
+        instructions::transaction::handle_create_transaction_token(ctx, params)
+    }
+
+    // ── Merchant Payments ──────────────────────────────────────────────
+
+    pub fn process_merchant_payment_sol(
+        ctx: Context<ProcessMerchantPaymentSol>,
+        params: MerchantQuoteParams,
+    ) -> Result<()> {
+        instructions::merchant::handle_process_merchant_payment_sol(ctx, params)
+    }
+
+    pub fn process_merchant_payment_token(
+        ctx: Context<ProcessMerchantPaymentToken>,
+        params: MerchantQuoteParams,
+    ) -> Result<()> {
+        instructions::merchant::handle_process_merchant_payment_token(ctx, params)
+    }
+
+    // ── Withdrawals ────────────────────────────────────────────────────
+
+    pub fn withdraw_sol(ctx: Context<WithdrawSol>, amount: u64) -> Result<()> {
+        instructions::withdraw::handle_withdraw_sol(ctx, amount)
+    }
+
+    pub fn withdraw_token(ctx: Context<WithdrawToken>, amount: u64) -> Result<()> {
+        instructions::withdraw::handle_withdraw_token(ctx, amount)
+    }
+
+    pub fn set_withdrawal_delay(ctx: Context<SetWithdrawalDelay>, delay: i64) -> Result<()> {
+        instructions::withdraw::handle_set_withdrawal_delay(ctx, delay)
+    }
+
+    pub fn queue_withdrawal(
+        ctx: Context<QueueWithdrawal>,
+        token_mint: Pubkey,
+        recipient: Pubkey,
+        amount: u64,
+        is_native: bool,
+    ) -> Result<()> {
+        instructions::withdraw::handle_queue_withdrawal(ctx, token_mint, recipient, amount, is_native)
+    }
+
+    pub fn execute_withdrawal_sol(ctx: Context<ExecuteWithdrawalSol>) -> Result<()> {
+        instructions::withdraw::handle_execute_withdrawal_sol(ctx)
+    }
+
+    pub fn execute_withdrawal_token(ctx: Context<ExecuteWithdrawalToken>) -> Result<()> {
+        instructions::withdraw::handle_execute_withdrawal_token(ctx)
+    }
+
+    pub fn cancel_withdrawal(ctx: Context<CancelWithdrawal>) -> Result<()> {
+        instructions::withdraw::handle_cancel_withdrawal(ctx)
+    }
+
+    // ── Point Deposits ─────────────────────────────────────────────────
+
+    pub fn deposit_points(
+        ctx: Context<DepositPoints>,
+        ref_id: String,
+        ref_id_hash: [u8; 32],
+        amount: u64,
+    ) -> Result<()> {
+        instructions::point::handle_deposit_points(ctx, ref_id, ref_id_hash, amount)
+    }
+
+    // ── Treasury ───────────────────────────────────────────────────────
+
+    pub fn sweep_platform_fees_sol(
+        ctx: Context<SweepPlatformFeesSol>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::treasury::handle_sweep_platform_fees_sol(ctx, amount)
+    }
+
+    pub fn sweep_platform_fees_token(
+        ctx: Context<SweepPlatformFeesToken>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::treasury::handle_sweep_platform_fees_token(ctx, amount)
+    }
+
+    pub fn sweep_merchant_backing_sol(
+        ctx: Context<SweepMerchantBackingSol>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::treasury::handle_sweep_merchant_backing_sol(ctx, amount)
+    }
+
+    pub fn sweep_merchant_backing_token(
+        ctx: Context<SweepMerchantBackingToken>,
+        amount: u64,
+    ) -> Result<()> {
+        instructions::treasury::handle_sweep_merchant_backing_token(ctx, amount)
     }
 }
-
-#[derive(Accounts)]
-pub struct Initialize {}

@@ -5,8 +5,14 @@ package_manager = "yarn"
 resolution = true
 skip-lint = false
 
+[programs.devnet]
+takumi_pay = "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy"
+
 [programs.localnet]
-takumi_pay = "9ZtzMfw1ra616vsdmKzzh2ebrJ779djXb9goTiSjtnSt"
+takumi_pay = "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy"
+
+[programs.mainnet]
+takumi_pay = "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy"
 
 [registry]
 url = "https://api.apr.dev"
