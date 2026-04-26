@@ -1,0 +1,10 @@
+{
+  "programId": "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy",
+  "configPda": "7L3w3E9agqZpznXgNEKVmFSPT38Hn2GdT7Xr6shf3aap",
+  "owner": "6SCnRCLB7LCEqrBKeSTmt2Gs6hdcs2EcrXviNPyLYHYU",
+  "backendSigner": "C4pvirRb9NHkfnBGo6TXAmYFifcEgpdu8utJNQckjp5f",
+  "mockUsdcMint": "4qFejVSp46Q4SZCGDrXbkFJC1qw5uo1JBnbXLnKZurey",
+  "ownerUsdcAta": "FnzSTT2znmqg8CmT6npKRiZW8dmujFmmgYTfKNoDsbJX",
+  "cluster": "devnet",
+  "setupAt": "2026-04-26T03:17:04.410Z"
+}

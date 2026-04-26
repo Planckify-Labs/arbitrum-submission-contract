@@ -18,7 +18,7 @@ takumi_pay = "6CCTEtYrk8unNhjYQ7npiLUf1iKQQJU88JSYn8EJLNYy"
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

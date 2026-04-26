@@ -187,19 +187,7 @@ contract TakumiPayPointDepositTest is Test {
         assertEq(dep.walletAddress, user1);
     }
 
-    function test_GetPointDepositByRef_RevertIf_NotAdminOrOwner() public {
-        vm.startPrank(user1);
-        usdc.approve(address(wallet), 100e6);
-        wallet.depositPoints(address(usdc), "pt_auth1", 100e6);
-        vm.stopPrank();
-
-        vm.prank(user2);
-        vm.expectRevert(TakumiWallet.NotAdminOrOwner.selector);
-        wallet.getPointDepositByRef("pt_auth1");
-    }
-
     function test_GetPointDepositByRef_RevertIf_NotFound() public {
-        vm.prank(admin);
         vm.expectRevert("Point deposit not found");
         wallet.getPointDepositByRef("pt_nonexistent");
     }

@@ -545,7 +545,6 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function getTransactionsByAddress(address user, uint256 offset, uint256 limit)
         external
         view
-        onlyAdminOrOwner
         returns (Transaction[] memory)
     {
         require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
@@ -567,13 +566,13 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         return result;
     }
 
-    function getTransactionByRef(string calldata refId) external view onlyAdminOrOwner returns (Transaction memory) {
+    function getTransactionByRef(string calldata refId) external view returns (Transaction memory) {
         uint256 txId = refToTx[refId];
         require(txId != 0, "Transaction not found");
         return transactions[txId];
     }
 
-    function getUserTransactionCount(address user) external view onlyAdminOrOwner returns (uint256) {
+    function getUserTransactionCount(address user) external view returns (uint256) {
         return userTransactions[user].length;
     }
 
@@ -582,7 +581,6 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function getTransactionsInRange(uint256 start, uint256 end, uint256 offset, uint256 limit)
         external
         view
-        onlyAdminOrOwner
         returns (Transaction[] memory)
     {
         require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
@@ -658,7 +656,6 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function getPointDepositByRef(string calldata refId)
         external
         view
-        onlyAdminOrOwner
         returns (PointDeposit memory)
     {
         uint256 depositId = pointRefToDeposit[refId];
@@ -669,7 +666,6 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function getPointDepositsByAddress(address user, uint256 offset, uint256 limit)
         external
         view
-        onlyAdminOrOwner
         returns (PointDeposit[] memory)
     {
         require(limit <= MAX_PAGINATION_LIMIT, "Limit too large");
@@ -681,7 +677,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         return _paginateDeposit(userPointDeposits[msg.sender], offset, limit);
     }
 
-    function getUserPointDepositCount(address user) external view onlyAdminOrOwner returns (uint256) {
+    function getUserPointDepositCount(address user) external view returns (uint256) {
         return userPointDeposits[user].length;
     }
 
