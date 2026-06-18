@@ -19,3 +19,6 @@ solana/.anchor/
 solana/target/
 solana/test-ledger/
 solana/**/*.rs.bk
+
+# Sui (Move)
+sui/build/

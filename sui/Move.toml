@@ -1,0 +1,18 @@
+# Takumi Agentic Web Intent Engine — on-chain intent receipt (Phase 1 §10).
+#
+# Publish to testnet:
+#   cd contract/sui && sui client publish --gas-budget 100000000
+# then paste the resulting Package ID into
+#   mobile-app/services/swap/sui/intentReceipt.config.ts
+#
+# `rev = framework/testnet` pins the Sui framework to the testnet release; use
+# framework/mainnet when publishing to mainnet.
+[package]
+name = "takumi_intent"
+edition = "2024.beta"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/testnet" }
+
+[addresses]
+takumi_intent = "0x0"

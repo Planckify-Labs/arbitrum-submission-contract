@@ -1,0 +1,10 @@
+{
+  "network": "testnet",
+  "packageId": "0x0bea3f1e47e213a95dc3d47148ace7047310e2d14dbc10dcb9eda6226a4ba301",
+  "transactionDigest": "DQaQu9EDAXdu39UNktyCSmm3s3i9fc1omJ6K9pSxanir",
+  "publishedAt": "2026-06-18",
+  "deployer": "0x6bd3699d5622da4379af9108e2b07f77f421ec83f6edaecf80b8fd65226f5fc4",
+  "modules": [
+    "intent_receipt"
+  ]
+}
