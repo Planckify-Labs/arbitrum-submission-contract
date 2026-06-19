@@ -1,0 +1,18 @@
+{
+  "network": "mainnet",
+  "version": 1,
+  "packageId": "0x68e6de85ba7178056ca70c4900e9cb3d87838248d83334a1b8e16ffd8dcb0f03",
+  "transactionDigest": "4gCAq4ZdQiJuSyjhyXpHH7W4DM2MFZ64faxUszQv9ota",
+  "publishedAt": "2026-06-19",
+  "deployer": "0x6bd3699d5622da4379af9108e2b07f77f421ec83f6edaecf80b8fd65226f5fc4",
+  "upgradeCap": "0x18b373592fab2b51f7341eaa79bc6c5420d56fce00fe47dc2c37ee392adc81f6",
+  "modules": [
+    "intent_receipt"
+  ],
+  "gasCost": {
+    "storageCost": 8261200,
+    "computationCost": 100000,
+    "storageRebate": 978120,
+    "totalMist": 7383080
+  }
+}
