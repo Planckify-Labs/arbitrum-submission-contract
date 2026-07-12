@@ -22,3 +22,8 @@ solana/**/*.rs.bk
 
 # Sui (Move)
 sui/build/
+
+# Stellar (Soroban)
+stellar/target/
+stellar/**/test_snapshots/
+stellar/.stellar/

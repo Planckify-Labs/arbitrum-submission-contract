@@ -1,0 +1,37 @@
+{
+  "network": "testnet",
+  "description": "Self-issued testnet USDC-code asset for demoing takumi_pay. Not affiliated with Circle's real testnet USDC issuer — a separate, independent SAC deployment created purely so we can mint unlimited demo balances without depending on an external faucet.",
+  "assetCode": "USDC",
+  "issuer": "GB427BU6PWBPJYNIN4RXN4432VBSZPHYYJXGOFOVYR63BUMXLM6P2RPV",
+  "issuerKeyAlias": "usdc-issuer",
+  "sacContractId": "CDJGWVHOS6XGCL5MJJFL2WTCNSFCKAGKW2KFZQ6CDEYZICUPEWS5FT4E",
+  "decimals": 7,
+  "deployTx": "05bb10761419ad4a50c48d88507826579e6a20316ef93e6b6a7eb420e29af935",
+  "publishedAt": "2026-07-12",
+  "mintedTo": [
+    {
+      "address": "GCZ6IK35AZZU2DC5HLRSEE2I3F5YUBRTALUA3ILI7V2FV5KLT2OR4LWM",
+      "alias": "deployer",
+      "amountRaw": "1000000000000",
+      "mintTx": "e781c6cfd8c9e7e986243e047b0202fec3f3056b89fc823e6a6d9b124221a3ed"
+    }
+  ],
+  "verifiedEndToEnd": {
+    "note": "create_transaction invoked against takumi_pay using this token; transfer + TransactionCreated events both fired.",
+    "contractId": "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+    "tx": "eae9e24dbe60068b52387b866a55954ca73b22a55fa6c4e5cd698a4dbc18febe",
+    "txId": 1
+  },
+  "pointDepositAllowlisted": {
+    "note": "This SAC is registered as an AllowedPointToken on takumi_pay (required by deposit_points, a separate allowlist from merchant tokens). Owner call add_allowed_point_token(deployer, SAC).",
+    "contractId": "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+    "tx": "18a8d28a78f7301372539af9d17e44a30f98d8641a541cb7b20ea3af43e7e982",
+    "publishedAt": "2026-07-12"
+  },
+  "pointDepositVerifiedEndToEnd": {
+    "note": "deposit_points invoked against takumi_pay using this token via the real mobile code (resolveStellarSacId + buildDepositPointsArgs + invokeSorobanContract); get_point_deposit read back wallet_address/token/ref_id/amount all matching — the exact fields the API's verifyPointDeposit checks.",
+    "contractId": "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+    "tx": "9b65ae68cc51703b1396f86fed996330f322c9b55068df5d027325b0d00a5d6b",
+    "depositId": 2
+  }
+}

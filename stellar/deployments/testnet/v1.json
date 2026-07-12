@@ -1,0 +1,13 @@
+{
+  "network": "testnet",
+  "version": 1,
+  "contractId": "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
+  "wasmHash": "f0ac6887d0ea988feead1fb7ae5d4ec52f0b3ce0ba8ff192195a009243d70816",
+  "deployer": "GCZ6IK35AZZU2DC5HLRSEE2I3F5YUBRTALUA3ILI7V2FV5KLT2OR4LWM",
+  "owner": "GCZ6IK35AZZU2DC5HLRSEE2I3F5YUBRTALUA3ILI7V2FV5KLT2OR4LWM",
+  "backendSignerPubkey": "04466f114c2f959229d812cc68731c4625fb869e8eefcf47d3da251f82ba93b4",
+  "publishedAt": "2026-07-12",
+  "wasm": "takumi_pay.optimized.wasm",
+  "deployTx": "45934ed8ee77ba22ac5060974a0b99d296515bc052ea743126f6aff42ed395d5",
+  "initializeTx": "60ad507791c47a9bf8148dfa1dd3d341d7f5687ff6d15b76459cb1de5c3d4992"
+}

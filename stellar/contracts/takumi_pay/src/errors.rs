@@ -1,0 +1,36 @@
+use soroban_sdk::contracterror;
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    NotOwner = 3,
+    NotAdminOrOwner = 4,
+    ContractPaused = 5,
+    PointDepositsPaused = 6,
+    ZeroAmount = 7,
+    AlreadyOwner = 8,
+    NotPendingOwner = 9,
+    NoPendingTransfer = 10,
+    QuoteExpired = 11,
+    RefConsumed = 12,
+    FeeExceedsAmount = 13,
+    FeeAmountInvalid = 14,
+    AmountExceedsLimit = 15,
+    TimelockActive = 16,
+    InsufficientBalance = 17,
+    DelayExceedsMax = 18,
+    NoDelaySet = 19,
+    TimelockNotExpired = 20,
+    AlreadyExecuted = 21,
+    AlreadyCancelled = 22,
+    TokenNotAllowed = 23,
+    InvalidStringLength = 24,
+    AdminAlreadyExists = 25,
+    AdminNotFound = 26,
+    AllowedTokenAlreadyExists = 27,
+    AllowedTokenNotFound = 28,
+    SameOwner = 29,
+}
