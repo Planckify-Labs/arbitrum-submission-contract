@@ -66,14 +66,14 @@ pub struct BackendSignerRotated {
 
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AllowedPointTokenAdded {
+pub struct AllowedPaymentTokenAdded {
     #[topic]
     pub token: Address,
 }
 
 #[contractevent]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AllowedPointTokenRemoved {
+pub struct AllowedPaymentTokenRemoved {
     #[topic]
     pub token: Address,
 }

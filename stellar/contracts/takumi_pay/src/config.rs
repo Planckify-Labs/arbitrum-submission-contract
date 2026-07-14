@@ -5,7 +5,7 @@ use crate::admin::{
 };
 use crate::errors::Error;
 use crate::events::{
-    AllowedPointTokenAdded, AllowedPointTokenRemoved, BackendSignerRotated, PausedToggled,
+    AllowedPaymentTokenAdded, AllowedPaymentTokenRemoved, BackendSignerRotated, PausedToggled,
     PointDepositsPausedToggled, SpendingLimitUpdated,
 };
 use crate::types::DataKey;
@@ -69,32 +69,36 @@ pub fn rotate_backend_signer(
     Ok(())
 }
 
-pub fn add_allowed_point_token(env: &Env, owner: Address, token: Address) -> Result<(), Error> {
+pub fn add_allowed_payment_token(env: &Env, owner: Address, token: Address) -> Result<(), Error> {
     let config = get_config(env)?;
     require_owner(&config, &owner)?;
 
-    let key = DataKey::AllowedPointToken(token.clone());
+    let key = DataKey::AllowedPaymentToken(token.clone());
     if env.storage().persistent().has(&key) {
         return Err(Error::AllowedTokenAlreadyExists);
     }
     env.storage().persistent().set(&key, &true);
     bump_persistent(env, &key);
 
-    AllowedPointTokenAdded { token }.publish(env);
+    AllowedPaymentTokenAdded { token }.publish(env);
     Ok(())
 }
 
-pub fn remove_allowed_point_token(env: &Env, owner: Address, token: Address) -> Result<(), Error> {
+pub fn remove_allowed_payment_token(
+    env: &Env,
+    owner: Address,
+    token: Address,
+) -> Result<(), Error> {
     let config = get_config(env)?;
     require_owner(&config, &owner)?;
 
-    let key = DataKey::AllowedPointToken(token.clone());
+    let key = DataKey::AllowedPaymentToken(token.clone());
     if !env.storage().persistent().has(&key) {
         return Err(Error::AllowedTokenNotFound);
     }
     env.storage().persistent().remove(&key);
 
-    AllowedPointTokenRemoved { token }.publish(env);
+    AllowedPaymentTokenRemoved { token }.publish(env);
     Ok(())
 }
 

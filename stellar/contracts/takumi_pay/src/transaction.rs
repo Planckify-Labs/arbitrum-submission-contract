@@ -27,6 +27,13 @@ pub fn create_transaction(
     {
         return Err(Error::InvalidStringLength);
     }
+    if !env
+        .storage()
+        .persistent()
+        .has(&DataKey::AllowedPaymentToken(params.token.clone()))
+    {
+        return Err(Error::TokenNotAllowed);
+    }
     check_spending_limit(env, &params.token, params.amount)?;
 
     let ref_hash = hash_string(env, &params.ref_id);

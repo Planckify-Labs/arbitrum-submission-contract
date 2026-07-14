@@ -126,6 +126,7 @@ fn test_create_transaction_and_spending_limit() {
     let payer = Address::generate(&env);
     let token = setup_token(&env, &owner);
     mint(&env, &token, &payer, 10_000_000);
+    client.add_allowed_payment_token(&owner, &token);
 
     client.set_spending_limit(&owner, &token, &500_000);
 
@@ -167,6 +168,7 @@ fn test_process_merchant_payment_happy_path() {
     let payer = Address::generate(&env);
     let token = setup_token(&env, &owner);
     mint(&env, &token, &payer, 10_000_000);
+    client.add_allowed_payment_token(&owner, &token);
 
     let quote = default_quote(&env, &token, "quote-1", env.ledger().timestamp() + 1000);
     let signature = sign_quote(&env, &contract_id, &backend_key, &quote);
@@ -215,6 +217,7 @@ fn test_process_merchant_payment_bad_signature_panics() {
     let payer = Address::generate(&env);
     let token = setup_token(&env, &owner);
     mint(&env, &token, &payer, 10_000_000);
+    client.add_allowed_payment_token(&owner, &token);
 
     let (wrong_key, _) = signing_key(&env);
     let quote = default_quote(&env, &token, "quote-bad-sig", env.ledger().timestamp() + 1000);
@@ -236,13 +239,59 @@ fn test_deposit_points_requires_allowed_token() {
     let not_allowed = client.try_deposit_points(&payer, &token, &ref_id, &1000);
     assert_eq!(not_allowed, Err(Ok(Error::TokenNotAllowed)));
 
-    client.add_allowed_point_token(&owner, &token);
+    client.add_allowed_payment_token(&owner, &token);
     let deposit_id = client.deposit_points(&payer, &token, &ref_id, &1000);
     assert_eq!(deposit_id, 1);
 
     let record = client.get_point_deposit(&deposit_id).unwrap();
     assert_eq!(record.amount, 1000);
     assert_eq!(record.wallet_address, payer);
+}
+
+#[test]
+fn test_create_transaction_requires_allowed_token() {
+    let env = Env::default();
+    let (client, owner, _contract_id, _backend_key) = setup(&env);
+
+    let payer = Address::generate(&env);
+    let token = setup_token(&env, &owner);
+    mint(&env, &token, &payer, 10_000_000);
+
+    let params = crate::types::CreateTransactionParams {
+        booking_id: String::from_str(&env, "booking-1"),
+        exchange_rate_id: 1,
+        product_variant_id: String::from_str(&env, "variant-1"),
+        ref_id: String::from_str(&env, "ref-1"),
+        token: token.clone(),
+        amount: 400_000,
+    };
+
+    let not_allowed = client.try_create_transaction(&payer, &params);
+    assert_eq!(not_allowed, Err(Ok(Error::TokenNotAllowed)));
+
+    client.add_allowed_payment_token(&owner, &token);
+    let tx_id = client.create_transaction(&payer, &params);
+    assert_eq!(tx_id, 1);
+}
+
+#[test]
+fn test_process_merchant_payment_requires_allowed_token() {
+    let env = Env::default();
+    let (client, owner, contract_id, backend_key) = setup(&env);
+
+    let payer = Address::generate(&env);
+    let token = setup_token(&env, &owner);
+    mint(&env, &token, &payer, 10_000_000);
+
+    let quote = default_quote(&env, &token, "quote-not-allowed", env.ledger().timestamp() + 1000);
+    let signature = sign_quote(&env, &contract_id, &backend_key, &quote);
+
+    let not_allowed = client.try_process_merchant_payment(&payer, &quote, &signature);
+    assert_eq!(not_allowed, Err(Ok(Error::TokenNotAllowed)));
+
+    client.add_allowed_payment_token(&owner, &token);
+    client.process_merchant_payment(&payer, &quote, &signature);
+    assert!(client.get_merchant_payment(&quote.ref_id).is_some());
 }
 
 #[test]
@@ -254,6 +303,7 @@ fn test_treasury_sweeps() {
     let recipient = Address::generate(&env);
     let token = setup_token(&env, &owner);
     mint(&env, &token, &payer, 10_000_000);
+    client.add_allowed_payment_token(&owner, &token);
 
     let quote = default_quote(&env, &token, "quote-treasury", env.ledger().timestamp() + 1000);
     let signature = sign_quote(&env, &contract_id, &backend_key, &quote);
@@ -285,6 +335,7 @@ fn test_withdrawal_timelock_flow() {
     let recipient = Address::generate(&env);
     let token = setup_token(&env, &owner);
     mint(&env, &token, &payer, 10_000_000);
+    client.add_allowed_payment_token(&owner, &token);
 
     let quote = default_quote(&env, &token, "quote-withdraw", env.ledger().timestamp() + 1000);
     let signature = sign_quote(&env, &contract_id, &backend_key, &quote);

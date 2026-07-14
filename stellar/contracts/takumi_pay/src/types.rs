@@ -38,8 +38,9 @@ pub enum DataKey {
     PointDeposit(u64),
     /// sha256(ref_id) -> replay marker for deposit_points.
     PointRef(BytesN<32>),
-    /// token address -> marker. Presence == allowed for point deposits.
-    AllowedPointToken(Address),
+    /// token address -> marker. Presence == allowed for payments and point
+    /// deposits (create_transaction + process_merchant_payment + deposit_points).
+    AllowedPaymentToken(Address),
     /// nonce -> WithdrawalRequest.
     Withdrawal(u64),
 }

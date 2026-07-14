@@ -31,7 +31,7 @@ pub fn deposit_points(
     if !env
         .storage()
         .persistent()
-        .has(&DataKey::AllowedPointToken(token.clone()))
+        .has(&DataKey::AllowedPaymentToken(token.clone()))
     {
         return Err(Error::TokenNotAllowed);
     }

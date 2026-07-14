@@ -23,15 +23,21 @@
     "txId": 1
   },
   "pointDepositAllowlisted": {
-    "note": "This SAC is registered as an AllowedPointToken on takumi_pay (required by deposit_points, a separate allowlist from merchant tokens). Owner call add_allowed_point_token(deployer, SAC).",
+    "note": "This SAC is registered as an AllowedPointToken on takumi_pay v1 (required by deposit_points, a separate allowlist from merchant tokens at the time). Owner call add_allowed_point_token(deployer, SAC). Superseded on v2 — see allowedPaymentTokenV2 below.",
     "contractId": "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
     "tx": "18a8d28a78f7301372539af9d17e44a30f98d8641a541cb7b20ea3af43e7e982",
     "publishedAt": "2026-07-12"
   },
   "pointDepositVerifiedEndToEnd": {
-    "note": "deposit_points invoked against takumi_pay using this token via the real mobile code (resolveStellarSacId + buildDepositPointsArgs + invokeSorobanContract); get_point_deposit read back wallet_address/token/ref_id/amount all matching — the exact fields the API's verifyPointDeposit checks.",
+    "note": "deposit_points invoked against takumi_pay v1 using this token via the real mobile code (resolveStellarSacId + buildDepositPointsArgs + invokeSorobanContract); get_point_deposit read back wallet_address/token/ref_id/amount all matching — the exact fields the API's verifyPointDeposit checks.",
     "contractId": "CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32",
     "tx": "9b65ae68cc51703b1396f86fed996330f322c9b55068df5d027325b0d00a5d6b",
     "depositId": 2
+  },
+  "allowedPaymentTokenV2": {
+    "note": "On takumi_pay v2, AllowedPointToken was merged into a single AllowedPaymentToken allowlist that gates create_transaction, process_merchant_payment, AND deposit_points. This SAC is registered as an AllowedPaymentToken via owner call add_allowed_payment_token(owner, SAC); verified with is_allowed_payment_token == true.",
+    "contractId": "CCLFTLVPHOKKDZYTMGU6UNXKFEN6VF3QVYEAJNULGIC7ZXTETAIPKKRZ",
+    "tx": "720d16deb0443790a4b695f4f12e0ee4bc00f14c4c5b8ce8091f4e893605e0b7",
+    "publishedAt": "2026-07-14"
   }
 }

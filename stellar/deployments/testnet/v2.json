@@ -1,0 +1,14 @@
+{
+  "network": "testnet",
+  "version": 2,
+  "contractId": "CCLFTLVPHOKKDZYTMGU6UNXKFEN6VF3QVYEAJNULGIC7ZXTETAIPKKRZ",
+  "wasmHash": "6e2d4f603ac8167d70463f476798e288019db70c9b6c515112ec745b032be65b",
+  "deployer": "GCZ6IK35AZZU2DC5HLRSEE2I3F5YUBRTALUA3ILI7V2FV5KLT2OR4LWM",
+  "owner": "GCZ6IK35AZZU2DC5HLRSEE2I3F5YUBRTALUA3ILI7V2FV5KLT2OR4LWM",
+  "backendSignerPubkey": "04466f114c2f959229d812cc68731c4625fb869e8eefcf47d3da251f82ba93b4",
+  "publishedAt": "2026-07-14",
+  "wasm": "takumi_pay.optimized.wasm",
+  "deployTx": "5a2609e34b2e27d4f1f013119d64edd38c031de9a49f2577495a5cd3437b9b4e",
+  "initializeTx": "d72b1661b640b5193c9ecf0eec5fddb513c2b058dc274f461360e6e6a6aa103f",
+  "changesSinceV1": "Merged AllowedPointToken into a single AllowedPaymentToken allowlist that now gates create_transaction, process_merchant_payment, AND deposit_points (v1 only gated deposit_points). add_allowed_point_token/remove_allowed_point_token/is_allowed_point_token were removed in favor of add_allowed_payment_token/remove_allowed_payment_token/is_allowed_payment_token. No upgrade path exists on this contract, so this is a fresh contract instance, not an in-place upgrade of v1 (CAEVSB5RGLRR3MVXUNMG67JRA4AAMZH4GR5WNCODSITO6YQI2W7XWD32)."
+}

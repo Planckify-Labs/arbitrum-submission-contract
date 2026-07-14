@@ -89,16 +89,20 @@ impl TakumiPay {
         config::rotate_backend_signer(&env, owner, new_signer)
     }
 
-    pub fn add_allowed_point_token(env: Env, owner: Address, token: Address) -> Result<(), Error> {
-        config::add_allowed_point_token(&env, owner, token)
-    }
-
-    pub fn remove_allowed_point_token(
+    pub fn add_allowed_payment_token(
         env: Env,
         owner: Address,
         token: Address,
     ) -> Result<(), Error> {
-        config::remove_allowed_point_token(&env, owner, token)
+        config::add_allowed_payment_token(&env, owner, token)
+    }
+
+    pub fn remove_allowed_payment_token(
+        env: Env,
+        owner: Address,
+        token: Address,
+    ) -> Result<(), Error> {
+        config::remove_allowed_payment_token(&env, owner, token)
     }
 
     // ── Transactions ────────────────────────────────────────────────
@@ -223,10 +227,10 @@ impl TakumiPay {
         env.storage().persistent().has(&DataKey::Admin(admin))
     }
 
-    pub fn is_allowed_point_token(env: Env, token: Address) -> bool {
+    pub fn is_allowed_payment_token(env: Env, token: Address) -> bool {
         env.storage()
             .persistent()
-            .has(&DataKey::AllowedPointToken(token))
+            .has(&DataKey::AllowedPaymentToken(token))
     }
 
     pub fn get_spending_limit(env: Env, token: Address) -> i128 {

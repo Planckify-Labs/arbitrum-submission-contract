@@ -44,6 +44,13 @@ pub fn process_merchant_payment(
     if env.ledger().timestamp() > quote.expires_at {
         return Err(Error::QuoteExpired);
     }
+    if !env
+        .storage()
+        .persistent()
+        .has(&DataKey::AllowedPaymentToken(quote.token.clone()))
+    {
+        return Err(Error::TokenNotAllowed);
+    }
 
     let ref_hash = hash_string(env, &quote.ref_id);
     let payment_key = DataKey::MerchantPayment(ref_hash);
