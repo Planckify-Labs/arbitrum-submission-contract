@@ -17,9 +17,33 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 /// The deployer address becomes the initial owner.
 /// Set INITIAL_OWNER env var to override (useful for multisig deployments).
 ///
-/// After deploying, the owner must allowlist every token that may be used for
-/// payments — including native, which is address(0):
-///   cast send $PROXY "addAllowedPaymentToken(address)" 0x0000...0000
+/// Post-deploy runbook — ORDER MATTERS. Raising a sweep cap and lowering the withdrawal
+/// delay are both "loosenings", so they become subject to whatever delay is already in
+/// force. Do them first, while withdrawalDelay is still 0:
+///
+///   1. On a stablecoin-native chain, declare the alias FIRST. On Arc the native coin
+///      and the USDC ERC-20 are two views of one balance, so this closes the native
+///      path and forces all value through the 6-decimal ERC-20 view:
+///        cast send $PROXY "setNativeAliasToken(address)" \
+///          0x3600000000000000000000000000000000000000
+///
+///   2. Allowlist every payment token. On a normal chain that may include native
+///      (address(0)); on an alias chain step 1 makes native un-allowlistable:
+///        cast send $PROXY "addAllowedPaymentToken(address)" <token>
+///
+///   3. Set sweep caps. Every exit — sweepPlatformFees, sweepMerchantBacking, withdraw,
+///      withdrawAll, recoverToken and executeWithdrawal — is bounded by these, and an
+///      unset cap fails closed, so the contract cannot pay anything out until this is
+///      done. Raising from 0 is a queue/apply pair that lands in a single block only
+///      while withdrawalDelay is 0:
+///        cast send $PROXY "queueSweepCap(address,uint256)" <token> <cap>
+///        cast send $PROXY "applySweepCap(address)" <token>
+///
+///   4. Only now raise the withdrawal delay. This also permanently disables the instant
+///      withdraw/withdrawAll/recoverToken paths:
+///        cast send $PROXY "setWithdrawalDelay(uint256)" 86400
+///
+/// Amounts follow the token's own decimals: 6 for USDC-style ERC-20s, 18 for native.
 contract DeployTakumiPay is Script {
     function run() external returns (address proxy) {
         address initialOwner = vm.envOr("INITIAL_OWNER", msg.sender);

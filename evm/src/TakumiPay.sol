@@ -181,10 +181,30 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
 
     mapping(bytes32 => PendingChange) private _pendingChanges;
 
+    // ====== Native Alias Chains ======
+    // On most chains the native coin and every ERC-20 are disjoint pools of money,
+    // so keying balances and limits by token address is sound. On a stablecoin-native
+    // chain like Arc that assumption breaks: the native coin (18 decimals, msg.value)
+    // and the USDC ERC-20 (6 decimals) are two views of ONE balance. Keying by address
+    // would then split one pot across two ledgers in two unit scales — doubling every
+    // sweep cap and desyncing platformFeeAccrued.
+    //
+    // Setting nativeAliasToken to that ERC-20 declares "address(0) is an alias of this
+    // token on this chain" and shuts the native path off entirely: it can no longer be
+    // allowlisted for payments, withdrawn, swept or recovered. Nothing becomes
+    // unreachable, because the ERC-20 view addresses the same balance in the 6-decimal
+    // units the rest of the system already speaks.
+    //
+    // Left at address(0) — the default, and the case on every other chain — nothing
+    // changes and native payments behave exactly as before.
+
+    /// @dev address(0) means "native is its own asset" (normal EVM chains).
+    address public nativeAliasToken;
+
     // ====== Storage Gap ======
     // Reserve slots for future upgrades. Decrement when adding new state variables.
 
-    uint256[46] private __gap;
+    uint256[45] private __gap;
 
     // ====== EIP-712 ======
 
@@ -241,6 +261,7 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
     event OwnershipTransferInitiated(address indexed currentOwner, address indexed pendingOwner);
     event OwnershipTransferCancelled(address indexed cancelledPendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event NativeAliasTokenSet(address indexed token);
 
     /// @notice Emitted on every successful merchant payment.
     /// @dev `refIdHash` / `merchantIdHash` are indexed, so Solidity stores only the
@@ -293,6 +314,9 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
     error NativeAmountMismatch();
     error UnexpectedNative();
     error NativeTransferFailed();
+    error NativeAliasAlreadySet();
+    error NativeAliasNotAllowlistable();
+    error NativeDisabledOnAliasChain();
 
     // ====== Modifiers ======
 
@@ -343,7 +367,7 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
 
     /// @notice Returns the current implementation version string.
     function version() external pure returns (string memory) {
-        return "2.0.0";
+        return "2.1.0";
     }
 
     /// @notice Returns the EIP-712 domain separator used for quote verification.
@@ -634,6 +658,7 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
     /// @dev Charges `amount` against the token's rolling per-window sweep allowance.
     ///      An unset cap fails closed.
     function _consumeSweepAllowance(address token, uint256 amount) private {
+        _rejectAliasedNative(token);
         uint256 cap = sweepCap[token];
         if (cap == 0) revert SweepCapNotSet();
         if (cap == SWEEP_CAP_UNLIMITED) return;
@@ -660,6 +685,10 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
     // Note: withdraw/withdrawAll bypass the timelock and are only permitted when
     // withdrawalDelay == 0. When a timelock is configured, use queueWithdrawal +
     // executeWithdrawal for all withdrawals.
+    //
+    // All of them are additionally bounded by the per-token sweep cap, so raising the
+    // amount that can leave the contract in one window always costs a queueSweepCap
+    // delay first — including on the timelocked path.
 
     function withdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
@@ -668,6 +697,10 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
         _doWithdraw(token, to, amount);
     }
 
+    /// @notice Withdraws the full balance of `token`.
+    /// @dev Like every other exit, this now charges the sweep allowance — so it reverts
+    ///      with SweepCapExceeded when the balance is larger than what is left in the
+    ///      current window. Use `withdraw` for a partial amount in that case.
     function withdrawAll(address token, address to) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
         if (withdrawalDelay > 0) revert TimelockActive();
@@ -676,14 +709,14 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
         _doWithdraw(token, to, balance);
     }
 
+    /// @dev Every owner-initiated withdrawal funnels through here, and every one of
+    ///      them charges the token's rolling sweep allowance. Previously only
+    ///      sweepPlatformFees/sweepMerchantBacking were rate-limited, which left
+    ///      withdraw/withdrawAll/executeWithdrawal as an uncapped way out of the
+    ///      contract — the cap is only a cap if no path skips it.
     function _doWithdraw(address token, address to, uint256 amount) internal {
-        if (token == address(0)) {
-            require(address(this).balance >= amount, "Insufficient ETH balance");
-            (bool ok,) = payable(to).call{value: amount}("");
-            require(ok, "ETH transfer failed");
-        } else {
-            IERC20(token).safeTransfer(to, amount);
-        }
+        _consumeSweepAllowance(token, amount);
+        _sendOut(token, to, amount);
         emit Withdraw(to, token, amount);
     }
 
@@ -772,6 +805,9 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
     function queueWithdrawal(address token, address to, uint256 amount) external onlyOwner returns (bytes32) {
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
+        // Reject at queue time rather than letting it sit for `withdrawalDelay` and
+        // then fail in executeWithdrawal.
+        _rejectAliasedNative(token);
         require(withdrawalDelay > 0, "Set a withdrawal delay before queuing");
 
         withdrawalNonce += 1;
@@ -819,19 +855,24 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
         if (to == address(0)) revert ZeroAddress();
         if (amount == 0) revert ZeroAmount();
         if (withdrawalDelay > 0) revert TimelockActive();
-        if (token == address(0)) {
-            require(address(this).balance >= amount, "Insufficient ETH balance");
-            (bool ok,) = payable(to).call{value: amount}("");
-            require(ok, "ETH transfer failed");
-        } else {
-            IERC20(token).safeTransfer(to, amount);
-        }
+        _consumeSweepAllowance(token, amount);
+        _sendOut(token, to, amount);
         emit TokenRecovered(token, to, amount);
     }
 
     // ====== ETH Direct Deposit Handling ======
 
-    receive() external payable nonReentrant {
+    /// @dev Deliberately not nonReentrant. The body only emits, so the guard protects
+    ///      nothing, while it would make any native value arriving mid-call revert the
+    ///      whole transaction — e.g. a contract counterparty refunding native inside a
+    ///      payment. Removing it can only widen what succeeds.
+    ///
+    ///      Note this is hygiene, not an Arc fix: an ERC-20 USDC transfer on Arc moves
+    ///      the underlying balance at state level and does NOT invoke the recipient's
+    ///      receive(), verified by eth_call against the live node — a transfer to an
+    ///      address whose code unconditionally reverts still succeeds, while a plain
+    ///      native send to that same address reverts.
+    receive() external payable {
         emit NativeDeposit(msg.sender, msg.value);
     }
 
@@ -1029,11 +1070,50 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
         return result;
     }
 
+    // ====== Native Alias Configuration ======
+
+    /// @notice Declares that address(0) and `token` are the same asset on this chain,
+    ///         and disables the native path everywhere as a result.
+    /// @dev Set-once and non-zero only. This is a property of the chain, not a policy
+    ///      knob — it never legitimately changes for a live deployment, and making it
+    ///      immutable removes it as a target for a compromised owner key. Correcting a
+    ///      genuine mistake requires an implementation upgrade.
+    ///
+    ///      Setting it only ever tightens (it closes a value path), so it takes effect
+    ///      immediately rather than going through `withdrawalDelay`.
+    function setNativeAliasToken(address token) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress();
+        if (nativeAliasToken != address(0)) revert NativeAliasAlreadySet();
+        // Refuse to create a config where one asset is already allowlisted twice.
+        if (allowedPaymentTokens[address(0)]) revert NativeAliasNotAllowlistable();
+        nativeAliasToken = token;
+        emit NativeAliasTokenSet(token);
+    }
+
+    /// @notice True when native is an alias of an ERC-20 on this chain, and therefore
+    ///         not usable as a token in its own right.
+    function isNativeAliased() public view returns (bool) {
+        return nativeAliasToken != address(0);
+    }
+
+    /// @dev Rejects the native path once an alias is configured. Guards the allowlist
+    ///      and every outbound transfer, so the aliased balance is only ever moved and
+    ///      accounted through its ERC-20 view.
+    function _rejectAliasedNative(address token) private view {
+        if (token == address(0) && nativeAliasToken != address(0)) {
+            revert NativeDisabledOnAliasChain();
+        }
+    }
+
     // ====== Payment Token Allowlist Management ======
 
     /// @dev address(0) (native) is a valid allowlist entry — it is gated exactly
-    ///      like an ERC-20 rather than bypassing the check.
+    ///      like an ERC-20 rather than bypassing the check. The one exception is an
+    ///      alias chain (see nativeAliasToken), where allowlisting both address(0) and
+    ///      the aliased ERC-20 would hand the same pot of money two independent sets of
+    ///      caps and ledgers.
     function addAllowedPaymentToken(address token) external onlyOwner {
+        _rejectAliasedNative(token);
         require(!allowedPaymentTokens[token], "Token already allowed");
         allowedPaymentTokens[token] = true;
         allowedPaymentTokenList.push(token);
@@ -1095,11 +1175,22 @@ contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable
 
     function _transferOutMerchant(address token, address recipient, uint256 amount) private {
         if (recipient == address(0)) revert ZeroRecipient();
+        _sendOut(token, recipient, amount);
+    }
+
+    /// @dev Single chokepoint for every outbound value transfer. On an alias chain the
+    ///      native path is closed here: the same balance stays fully reachable through
+    ///      nativeAliasToken's ERC-20 view, in the 6-decimal units the caps and ledgers
+    ///      are denominated in. Only sub-unit dust (< 1e12 native on Arc, i.e. under a
+    ///      millionth of a dollar) is not addressable that way.
+    function _sendOut(address token, address to, uint256 amount) private {
+        _rejectAliasedNative(token);
         if (token == address(0)) {
-            (bool ok,) = payable(recipient).call{value: amount}("");
+            if (address(this).balance < amount) revert InsufficientBalance();
+            (bool ok,) = payable(to).call{value: amount}("");
             if (!ok) revert NativeTransferFailed();
         } else {
-            IERC20(token).safeTransfer(recipient, amount);
+            IERC20(token).safeTransfer(to, amount);
         }
     }
 

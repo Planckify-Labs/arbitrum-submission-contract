@@ -80,6 +80,25 @@ contract TakumiPayProductionTest is Test {
 
         vm.deal(user1, 100 ether);
         vm.deal(user2, 100 ether);
+
+        // Every exit — sweeps, withdraw, executeWithdrawal, recoverToken — is bounded
+        // by the per-token sweep cap, and an unset cap fails closed. Caps are set here,
+        // before any withdrawalDelay is in force, because raising one is a loosening
+        // and would otherwise be subject to that delay. This mirrors the deploy order.
+        _setSweepCap(address(usdc), type(uint256).max);
+        _setSweepCap(address(usdt), type(uint256).max);
+        _setSweepCap(address(0), type(uint256).max);
+    }
+
+    /// Raising a sweep cap is a two-step queue/apply (both legs land in the same block
+    /// while withdrawalDelay is 0); lowering is a single immediate call.
+    function _setSweepCap(address token, uint256 cap) internal {
+        if (cap > wallet.sweepCap(token)) {
+            wallet.queueSweepCap(token, cap);
+            wallet.applySweepCap(token);
+        } else {
+            wallet.setSweepCap(token, cap);
+        }
     }
 
     // ====== Global Pause ======
@@ -743,7 +762,7 @@ contract TakumiPayProductionTest is Test {
     // ====== Upgradeability ======
 
     function test_Version_Returns_Current() public view {
-        assertEq(wallet.version(), "2.0.0");
+        assertEq(wallet.version(), "2.1.0");
     }
 
     function test_UpgradeToAndCall_RevertIf_NotOwner() public {

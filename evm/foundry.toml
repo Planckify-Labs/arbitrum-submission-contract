@@ -5,6 +5,10 @@ libs = ["lib"]
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+# Pinned rather than left to the solc default, which drifts between releases and would
+# silently change deployed bytecode. Cancun is the highest version supported by every
+# chain we target: Arc's baseline is Osaka (a superset), Arbitrum is on Prague.
+evm_version = "cancun"
 fs_permissions = [{ access = "read-write", path = "./deployments" }]
 remappings = [
     "@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/",
@@ -14,8 +18,11 @@ remappings = [
 
 [rpc_endpoints]
 arbitrum = "${RPC_URL}"
+arc_testnet = "https://rpc.testnet.arc.network"
 
 [etherscan]
 arbitrum = { key = "${ETHERSCAN_API_KEY}", chain = 42161 }
+# arcscan is a Blockscout instance, not Etherscan — it ignores the API key.
+arc_testnet = { key = "unused", chain = 5042002, url = "https://testnet.arcscan.app/api" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
