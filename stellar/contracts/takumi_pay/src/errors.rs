@@ -33,4 +33,8 @@ pub enum Error {
     AllowedTokenAlreadyExists = 27,
     AllowedTokenNotFound = 28,
     SameOwner = 29,
+    SweepCapNotSet = 30,
+    SweepCapExceeded = 31,
+    NotALoosening = 32,
+    NoPendingChange = 33,
 }

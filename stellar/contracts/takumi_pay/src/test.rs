@@ -6,8 +6,15 @@ use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{token, Address, BytesN, Env, String};
 
 use crate::merchant::QuoteMessage;
-use crate::types::MerchantQuote;
+use crate::types::{MerchantQuote, SWEEP_CAP_UNLIMITED, SWEEP_WINDOW};
 use crate::{Error, TakumiPay, TakumiPayClient};
+
+/// Raising a sweep cap is a loosening, so it is a two-step queue/apply. With
+/// `withdrawal_delay` at 0 both legs land in the same ledger.
+fn raise_sweep_cap(client: &TakumiPayClient, owner: &Address, token: &Address, cap: i128) {
+    client.queue_sweep_cap(owner, token, &cap);
+    client.apply_sweep_cap(owner, token);
+}
 
 fn signing_key(env: &Env) -> (SigningKey, BytesN<32>) {
     let mut csprng = rand::rngs::OsRng;
@@ -309,6 +316,11 @@ fn test_treasury_sweeps() {
     let signature = sign_quote(&env, &contract_id, &backend_key, &quote);
     client.process_merchant_payment(&payer, &quote, &signature);
 
+    // Sweeps fail closed until a cap is configured.
+    let uncapped = client.try_sweep_platform_fees(&owner, &token, &recipient, &10_000);
+    assert_eq!(uncapped, Err(Ok(Error::SweepCapNotSet)));
+    raise_sweep_cap(&client, &owner, &token, SWEEP_CAP_UNLIMITED);
+
     // Fee sweep is bounded by accrued fees.
     let over = client.try_sweep_platform_fees(&owner, &token, &recipient, &20_000);
     assert_eq!(over, Err(Ok(Error::FeeAmountInvalid)));
@@ -361,4 +373,99 @@ fn test_withdrawal_timelock_flow() {
 
     let already = client.try_execute_withdrawal(&owner, &nonce);
     assert_eq!(already, Err(Ok(Error::AlreadyExecuted)));
+}
+
+#[test]
+fn test_sweep_cap_rate_limits_and_resets() {
+    let env = Env::default();
+    let (client, owner, contract_id, backend_key) = setup(&env);
+
+    let payer = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = setup_token(&env, &owner);
+    mint(&env, &token, &payer, 10_000_000);
+    client.add_allowed_payment_token(&owner, &token);
+
+    let quote = default_quote(&env, &token, "quote-cap", env.ledger().timestamp() + 1000);
+    let signature = sign_quote(&env, &contract_id, &backend_key, &quote);
+    client.process_merchant_payment(&payer, &quote, &signature);
+
+    raise_sweep_cap(&client, &owner, &token, 100_000);
+
+    client.sweep_merchant_backing(&owner, &token, &recipient, &60_000);
+
+    // 60_000 consumed this window; 50_000 more would breach the 100_000 cap.
+    let over = client.try_sweep_merchant_backing(&owner, &token, &recipient, &50_000);
+    assert_eq!(over, Err(Ok(Error::SweepCapExceeded)));
+
+    let token_client = token::TokenClient::new(&env, &token);
+    assert_eq!(token_client.balance(&recipient), 60_000);
+
+    // A fresh window restores the full allowance.
+    env.ledger()
+        .set_timestamp(env.ledger().timestamp() + SWEEP_WINDOW);
+    client.sweep_merchant_backing(&owner, &token, &recipient, &100_000);
+    assert_eq!(token_client.balance(&recipient), 160_000);
+}
+
+#[test]
+fn test_sweep_cap_raise_is_queued_lower_is_immediate() {
+    let env = Env::default();
+    let (client, owner, _contract_id, _backend_key) = setup(&env);
+    let token = setup_token(&env, &owner);
+
+    raise_sweep_cap(&client, &owner, &token, 100_000);
+    assert_eq!(client.get_sweep_cap(&token), 100_000);
+
+    // Raising in a single call is rejected — that would defeat the rate limit.
+    let direct = client.try_set_sweep_cap(&owner, &token, &200_000);
+    assert_eq!(direct, Err(Ok(Error::NotALoosening)));
+
+    // Lowering is immediate.
+    client.set_sweep_cap(&owner, &token, &10_000);
+    assert_eq!(client.get_sweep_cap(&token), 10_000);
+}
+
+/// The original bypass: set_withdrawal_delay(0) then withdraw() in one
+/// transaction made the timelock decorative. Lowering is now queued behind the
+/// delay currently in force.
+#[test]
+fn test_withdrawal_delay_cannot_be_lowered_instantly() {
+    let env = Env::default();
+    let (client, owner, _contract_id, _backend_key) = setup(&env);
+
+    client.set_withdrawal_delay(&owner, &3600);
+
+    let direct = client.try_set_withdrawal_delay(&owner, &0);
+    assert_eq!(direct, Err(Ok(Error::NotALoosening)));
+    assert_eq!(client.get_config().withdrawal_delay, 3600);
+
+    client.queue_withdrawal_delay(&owner, &0);
+
+    let too_early = client.try_apply_withdrawal_delay(&owner);
+    assert_eq!(too_early, Err(Ok(Error::TimelockNotExpired)));
+    assert_eq!(client.get_config().withdrawal_delay, 3600);
+
+    env.ledger().set_timestamp(env.ledger().timestamp() + 3601);
+    client.apply_withdrawal_delay(&owner);
+    assert_eq!(client.get_config().withdrawal_delay, 0);
+}
+
+#[test]
+fn test_withdrawal_delay_raise_is_immediate_and_cancellable() {
+    let env = Env::default();
+    let (client, owner, _contract_id, _backend_key) = setup(&env);
+
+    client.set_withdrawal_delay(&owner, &1800);
+    assert_eq!(client.get_config().withdrawal_delay, 1800);
+    client.set_withdrawal_delay(&owner, &3600);
+    assert_eq!(client.get_config().withdrawal_delay, 3600);
+
+    client.queue_withdrawal_delay(&owner, &600);
+    client.cancel_withdrawal_delay(&owner);
+
+    env.ledger().set_timestamp(env.ledger().timestamp() + 7200);
+    let cancelled = client.try_apply_withdrawal_delay(&owner);
+    assert_eq!(cancelled, Err(Ok(Error::NoPendingChange)));
+    assert_eq!(client.get_config().withdrawal_delay, 3600);
 }

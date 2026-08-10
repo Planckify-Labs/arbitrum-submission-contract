@@ -160,6 +160,36 @@ impl TakumiPay {
         treasury::sweep_merchant_backing(&env, owner, token, recipient, amount)
     }
 
+    // ── Sweep rate limit ────────────────────────────────────────────
+    // Sweeps bypass the withdrawal timelock by design (merchant float has to
+    // settle daily), so a per-token rolling cap bounds what a leaked owner key
+    // can drain per window. Raising a cap is a loosening and is queued.
+
+    pub fn set_sweep_cap(env: Env, owner: Address, token: Address, cap: i128) -> Result<(), Error> {
+        treasury::set_sweep_cap(&env, owner, token, cap)
+    }
+
+    pub fn queue_sweep_cap(
+        env: Env,
+        owner: Address,
+        token: Address,
+        cap: i128,
+    ) -> Result<(), Error> {
+        treasury::queue_sweep_cap(&env, owner, token, cap)
+    }
+
+    pub fn apply_sweep_cap(env: Env, owner: Address, token: Address) -> Result<(), Error> {
+        treasury::apply_sweep_cap(&env, owner, token)
+    }
+
+    pub fn cancel_sweep_cap(env: Env, owner: Address, token: Address) -> Result<(), Error> {
+        treasury::cancel_sweep_cap(&env, owner, token)
+    }
+
+    pub fn get_sweep_cap(env: Env, token: Address) -> i128 {
+        treasury::get_sweep_cap(&env, token)
+    }
+
     // ── Withdrawals ─────────────────────────────────────────────────
 
     pub fn withdraw(
@@ -174,6 +204,18 @@ impl TakumiPay {
 
     pub fn set_withdrawal_delay(env: Env, owner: Address, delay: u64) -> Result<(), Error> {
         withdraw::set_withdrawal_delay(&env, owner, delay)
+    }
+
+    pub fn queue_withdrawal_delay(env: Env, owner: Address, delay: u64) -> Result<(), Error> {
+        withdraw::queue_withdrawal_delay(&env, owner, delay)
+    }
+
+    pub fn apply_withdrawal_delay(env: Env, owner: Address) -> Result<(), Error> {
+        withdraw::apply_withdrawal_delay(&env, owner)
+    }
+
+    pub fn cancel_withdrawal_delay(env: Env, owner: Address) -> Result<(), Error> {
+        withdraw::cancel_withdrawal_delay(&env, owner)
     }
 
     pub fn queue_withdrawal(

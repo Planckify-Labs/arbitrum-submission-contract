@@ -43,6 +43,45 @@ pub enum DataKey {
     AllowedPaymentToken(Address),
     /// nonce -> WithdrawalRequest.
     Withdrawal(u64),
+    /// token -> max sweepable per window. Absent or 0 blocks sweeps entirely.
+    SweepCap(Address),
+    /// token -> amount already swept in the current window.
+    SweptInWindow(Address),
+    /// token -> ledger timestamp the current sweep window opened at.
+    SweepWindowStart(Address),
+    /// Queued reduction of the withdrawal delay.
+    PendingWithdrawalDelay,
+    /// token -> queued increase of the sweep cap.
+    PendingSweepCap(Address),
+}
+
+/// Rolling window for the treasury sweep rate limit (24h).
+///
+/// Sweeps deliberately bypass the withdrawal timelock — merchant float has to
+/// settle daily and a 7-day queue would break that. The cap gives back what the
+/// timelock was there for: a leaked owner key can drain at most `SweepCap` per
+/// window, visibly, instead of emptying the contract in one transaction.
+pub const SWEEP_WINDOW: u64 = 24 * 60 * 60;
+
+/// Sentinel meaning "no cap". Must be set explicitly — it is not the default.
+pub const SWEEP_CAP_UNLIMITED: i128 = i128::MAX;
+
+/// A queued security-loosening change. Raising a sweep cap or lowering the
+/// withdrawal delay weakens a control, so it is itself subject to the delay
+/// currently in force — otherwise an owner key that leaks could just set the
+/// delay to 0 and withdraw in the same transaction.
+#[contracttype]
+#[derive(Clone)]
+pub struct PendingDelay {
+    pub value: u64,
+    pub unlock_time: u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PendingCap {
+    pub value: i128,
+    pub unlock_time: u64,
 }
 
 #[contracttype]

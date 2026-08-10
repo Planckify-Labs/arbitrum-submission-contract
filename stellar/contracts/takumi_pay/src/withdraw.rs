@@ -3,10 +3,10 @@ use soroban_sdk::{token, Address, Env};
 use crate::admin::{bump_persistent, get_config, require_owner, save_config};
 use crate::errors::Error;
 use crate::events::{
-    WithdrawalCancelled, WithdrawalDelayUpdated, WithdrawalExecuted, WithdrawalQueued,
-    WithdrawEvent,
+    PendingDelayCancelled, PendingDelayQueued, WithdrawalCancelled,
+    WithdrawalDelayUpdated, WithdrawalExecuted, WithdrawalQueued, WithdrawEvent,
 };
-use crate::types::{DataKey, WithdrawalRequest, MAX_WITHDRAWAL_DELAY};
+use crate::types::{DataKey, PendingDelay, WithdrawalRequest, MAX_WITHDRAWAL_DELAY};
 
 /// Immediate withdrawal — only usable while no timelock delay is configured.
 /// Once `set_withdrawal_delay` is set above 0, callers must use
@@ -43,6 +43,12 @@ pub fn withdraw(
     Ok(())
 }
 
+/// Raises the withdrawal delay. Immediate — tightening a control is always safe.
+///
+/// Lowering must go through `queue_withdrawal_delay` / `apply_withdrawal_delay`
+/// so the reduction is itself subject to the delay currently in force. Without
+/// that the timelock is decorative: an owner key that leaks would simply set the
+/// delay to 0 and withdraw in the same transaction.
 pub fn set_withdrawal_delay(env: &Env, owner: Address, delay: u64) -> Result<(), Error> {
     let mut config = get_config(env)?;
     require_owner(&config, &owner)?;
@@ -50,10 +56,80 @@ pub fn set_withdrawal_delay(env: &Env, owner: Address, delay: u64) -> Result<(),
     if delay > MAX_WITHDRAWAL_DELAY {
         return Err(Error::DelayExceedsMax);
     }
+    if delay < config.withdrawal_delay {
+        return Err(Error::NotALoosening);
+    }
     config.withdrawal_delay = delay;
     save_config(env, &config);
 
     WithdrawalDelayUpdated { delay }.publish(env);
+    Ok(())
+}
+
+pub fn queue_withdrawal_delay(env: &Env, owner: Address, delay: u64) -> Result<(), Error> {
+    let config = get_config(env)?;
+    require_owner(&config, &owner)?;
+
+    if delay >= config.withdrawal_delay {
+        return Err(Error::NotALoosening);
+    }
+
+    let unlock_time = env.ledger().timestamp() + config.withdrawal_delay;
+    let key = DataKey::PendingWithdrawalDelay;
+    env.storage().persistent().set(
+        &key,
+        &PendingDelay {
+            value: delay,
+            unlock_time,
+        },
+    );
+    bump_persistent(env, &key);
+
+    PendingDelayQueued { delay, unlock_time }.publish(env);
+    Ok(())
+}
+
+pub fn apply_withdrawal_delay(env: &Env, owner: Address) -> Result<(), Error> {
+    let mut config = get_config(env)?;
+    require_owner(&config, &owner)?;
+
+    let key = DataKey::PendingWithdrawalDelay;
+    let pending: PendingDelay = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(Error::NoPendingChange)?;
+    if env.ledger().timestamp() < pending.unlock_time {
+        return Err(Error::TimelockNotExpired);
+    }
+    env.storage().persistent().remove(&key);
+
+    config.withdrawal_delay = pending.value;
+    save_config(env, &config);
+
+    WithdrawalDelayUpdated {
+        delay: pending.value,
+    }
+    .publish(env);
+    Ok(())
+}
+
+pub fn cancel_withdrawal_delay(env: &Env, owner: Address) -> Result<(), Error> {
+    let config = get_config(env)?;
+    require_owner(&config, &owner)?;
+
+    let key = DataKey::PendingWithdrawalDelay;
+    let pending: PendingDelay = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .ok_or(Error::NoPendingChange)?;
+    env.storage().persistent().remove(&key);
+
+    PendingDelayCancelled {
+        delay: pending.value,
+    }
+    .publish(env);
     Ok(())
 }
 

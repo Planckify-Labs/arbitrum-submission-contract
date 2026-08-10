@@ -1,7 +1,7 @@
 # TakumiPay — Stellar (Soroban)
 
 Soroban port of the merchant-payment contract that also exists on
-[EVM](../evm/src/TakumiPayV2.sol) and [Solana](../solana/programs/takumi_pay).
+[EVM](../evm/src/TakumiPay.sol) and [Solana](../solana/programs/takumi_pay).
 Feature parity with the Solana program: owner/admin roles, pausing, backend-signed
 merchant payment quotes with replay protection, platform fee treasury, per-token
 spending limits, generic transactions, point deposits, and timelocked withdrawals.
@@ -28,7 +28,7 @@ spending limits, generic transactions, point deposits, and timelocked withdrawal
 contracts/takumi_pay/src/
   lib.rs        contract entrypoints (thin wrappers over the modules below)
   admin.rs      init, owner/admin roles, two-step ownership transfer, shared auth helpers
-  config.rs     pause flags, spending limits, backend signer rotation, allowed point tokens
+  config.rs     pause flags, spending limits, backend signer rotation, allowed payment tokens
   transaction.rs  generic create_transaction (with spending-limit + replay checks)
   merchant.rs   process_merchant_payment — the backend-signed quote flow
   point.rs      deposit_points

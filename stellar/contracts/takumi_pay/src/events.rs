@@ -180,3 +180,40 @@ pub struct WithdrawalCancelled {
 pub struct WithdrawalDelayUpdated {
     pub delay: u64,
 }
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SweepCapUpdated {
+    #[topic]
+    pub token: Address,
+    pub cap: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingDelayQueued {
+    pub delay: u64,
+    pub unlock_time: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingDelayCancelled {
+    pub delay: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingSweepCapQueued {
+    #[topic]
+    pub token: Address,
+    pub cap: i128,
+    pub unlock_time: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingSweepCapCancelled {
+    #[topic]
+    pub token: Address,
+}
