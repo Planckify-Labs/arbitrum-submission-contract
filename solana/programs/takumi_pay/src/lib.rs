@@ -67,12 +67,20 @@ pub mod takumi_pay {
         instructions::config::handle_set_point_deposits_paused(ctx, paused)
     }
 
-    pub fn add_allowed_point_token(ctx: Context<AddAllowedPointToken>) -> Result<()> {
-        instructions::config::handle_add_allowed_point_token(ctx)
+    /// Allowlists a token for every value-in entrypoint. Pass `Pubkey::default()`
+    /// to allowlist native SOL.
+    pub fn add_allowed_payment_token(
+        ctx: Context<AddAllowedPaymentToken>,
+        token_mint: Pubkey,
+    ) -> Result<()> {
+        instructions::config::handle_add_allowed_payment_token(ctx, token_mint)
     }
 
-    pub fn remove_allowed_point_token(ctx: Context<RemoveAllowedPointToken>) -> Result<()> {
-        instructions::config::handle_remove_allowed_point_token(ctx)
+    pub fn remove_allowed_payment_token(
+        ctx: Context<RemoveAllowedPaymentToken>,
+        token_mint: Pubkey,
+    ) -> Result<()> {
+        instructions::config::handle_remove_allowed_payment_token(ctx, token_mint)
     }
 
     // ── Transactions ───────────────────────────────────────────────────
@@ -115,6 +123,49 @@ pub mod takumi_pay {
 
     pub fn withdraw_token(ctx: Context<WithdrawToken>, amount: u64) -> Result<()> {
         instructions::withdraw::handle_withdraw_token(ctx, amount)
+    }
+
+    // ── Sweep rate limit ───────────────────────────────────────────────
+    // Sweeps bypass the withdrawal timelock by design (merchant float has to
+    // settle daily), so a per-token rolling cap bounds what a leaked owner key
+    // can drain per window. Pass Pubkey::default() for native SOL.
+
+    pub fn set_sweep_cap(ctx: Context<SetSweepCap>, token_mint: Pubkey, cap: u64) -> Result<()> {
+        instructions::sweep_cap::handle_set_sweep_cap(ctx, token_mint, cap)
+    }
+
+    pub fn queue_sweep_cap(
+        ctx: Context<QueueSweepCap>,
+        token_mint: Pubkey,
+        cap: u64,
+    ) -> Result<()> {
+        instructions::sweep_cap::handle_queue_sweep_cap(ctx, token_mint, cap)
+    }
+
+    pub fn apply_sweep_cap(
+        ctx: Context<ModifyPendingSweepCap>,
+        token_mint: Pubkey,
+    ) -> Result<()> {
+        instructions::sweep_cap::handle_apply_sweep_cap(ctx, token_mint)
+    }
+
+    pub fn cancel_sweep_cap(
+        ctx: Context<ModifyPendingSweepCap>,
+        token_mint: Pubkey,
+    ) -> Result<()> {
+        instructions::sweep_cap::handle_cancel_sweep_cap(ctx, token_mint)
+    }
+
+    pub fn queue_withdrawal_delay(ctx: Context<SetWithdrawalDelay>, delay: i64) -> Result<()> {
+        instructions::withdraw::handle_queue_withdrawal_delay(ctx, delay)
+    }
+
+    pub fn apply_withdrawal_delay(ctx: Context<SetWithdrawalDelay>) -> Result<()> {
+        instructions::withdraw::handle_apply_withdrawal_delay(ctx)
+    }
+
+    pub fn cancel_withdrawal_delay(ctx: Context<SetWithdrawalDelay>) -> Result<()> {
+        instructions::withdraw::handle_cancel_withdrawal_delay(ctx)
     }
 
     pub fn set_withdrawal_delay(ctx: Context<SetWithdrawalDelay>, delay: i64) -> Result<()> {

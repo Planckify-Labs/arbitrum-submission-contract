@@ -49,6 +49,15 @@ pub struct ProcessMerchantPaymentSol<'info> {
     )]
     pub platform_fee_account: Account<'info, PlatformFeeAccount>,
 
+    /// Native SOL is keyed by `Pubkey::default()`. Absent PDA == token not
+    /// allowlisted, and the instruction fails to deserialize it.
+    #[account(
+        seeds = [ALLOWED_PAYMENT_TOKEN_SEED, config.key().as_ref(), Pubkey::default().as_ref()],
+        bump = allowed_token.bump,
+        has_one = config,
+    )]
+    pub allowed_token: Account<'info, AllowedPaymentToken>,
+
     /// CHECK: Instructions sysvar for Ed25519 signature verification.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::id())]
     pub instructions_sysvar: AccountInfo<'info>,
@@ -157,6 +166,16 @@ pub struct ProcessMerchantPaymentToken<'info> {
     pub platform_fee_account: Account<'info, PlatformFeeAccount>,
 
     pub token_mint: InterfaceAccount<'info, Mint>,
+
+    /// Absent PDA == token not allowlisted, and the instruction fails to
+    /// deserialize it. A backend-signed quote is not on its own sufficient —
+    /// the token must also be on the allowlist.
+    #[account(
+        seeds = [ALLOWED_PAYMENT_TOKEN_SEED, config.key().as_ref(), token_mint.key().as_ref()],
+        bump = allowed_token.bump,
+        has_one = config,
+    )]
+    pub allowed_token: Account<'info, AllowedPaymentToken>,
 
     #[account(
         mut,

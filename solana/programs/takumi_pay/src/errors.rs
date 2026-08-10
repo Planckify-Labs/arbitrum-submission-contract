@@ -64,4 +64,14 @@ pub enum TakumiPayError {
     WithdrawalTypeMismatch,
     #[msg("Arithmetic overflow")]
     Overflow,
+    #[msg("Sweep cap not set for this token — sweeps fail closed until configured")]
+    SweepCapNotSet,
+    #[msg("Sweep would exceed the per-window cap")]
+    SweepCapExceeded,
+    #[msg("Not a tightening — loosening a control must be queued")]
+    NotALoosening,
+    #[msg("No pending change queued")]
+    NoPendingChange,
+    #[msg("Pending change is still timelocked")]
+    PendingChangeLocked,
 }

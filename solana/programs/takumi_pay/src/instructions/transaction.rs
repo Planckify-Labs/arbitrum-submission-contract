@@ -40,6 +40,15 @@ pub struct CreateTransactionSol<'info> {
     )]
     pub ref_record: Account<'info, RefRecord>,
 
+    /// Native SOL is keyed by `Pubkey::default()`. Absent PDA == token not
+    /// allowlisted, and the instruction fails to deserialize it.
+    #[account(
+        seeds = [ALLOWED_PAYMENT_TOKEN_SEED, config.key().as_ref(), Pubkey::default().as_ref()],
+        bump = allowed_token.bump,
+        has_one = config,
+    )]
+    pub allowed_token: Account<'info, AllowedPaymentToken>,
+
     pub spending_limit: Option<Account<'info, SpendingLimit>>,
 
     pub system_program: Program<'info, System>,
@@ -134,6 +143,16 @@ pub struct CreateTransactionToken<'info> {
     pub ref_record: Account<'info, RefRecord>,
 
     pub token_mint: InterfaceAccount<'info, Mint>,
+
+    /// Absent PDA == token not allowlisted, and the instruction fails to
+    /// deserialize it. Gates create_transaction the same way deposit_points
+    /// has always been gated.
+    #[account(
+        seeds = [ALLOWED_PAYMENT_TOKEN_SEED, config.key().as_ref(), token_mint.key().as_ref()],
+        bump = allowed_token.bump,
+        has_one = config,
+    )]
+    pub allowed_token: Account<'info, AllowedPaymentToken>,
 
     #[account(
         mut,

@@ -137,7 +137,8 @@ pub fn handle_set_point_deposits_paused(
 // ── Add Allowed Point Token ────────────────────────────────────────────────
 
 #[derive(Accounts)]
-pub struct AddAllowedPointToken<'info> {
+#[instruction(token_mint: Pubkey)]
+pub struct AddAllowedPaymentToken<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
@@ -148,29 +149,32 @@ pub struct AddAllowedPointToken<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    pub token_mint: Account<'info, Mint>,
-
     #[account(
         init,
         payer = owner,
-        space = 8 + AllowedPointToken::INIT_SPACE,
-        seeds = [ALLOWED_POINT_TOKEN_SEED, config.key().as_ref(), token_mint.key().as_ref()],
+        space = 8 + AllowedPaymentToken::INIT_SPACE,
+        seeds = [ALLOWED_PAYMENT_TOKEN_SEED, config.key().as_ref(), token_mint.as_ref()],
         bump,
     )]
-    pub allowed_token: Account<'info, AllowedPointToken>,
+    pub allowed_token: Account<'info, AllowedPaymentToken>,
 
     pub system_program: Program<'info, System>,
 }
 
-pub fn handle_add_allowed_point_token(ctx: Context<AddAllowedPointToken>) -> Result<()> {
+/// `token_mint` is an argument rather than a `Mint` account so native SOL —
+/// keyed by `Pubkey::default()`, which is not a mint — can be allowlisted with
+/// the same instruction. The payment entrypoints still validate the real mint
+/// through `InterfaceAccount<Mint>`.
+pub fn handle_add_allowed_payment_token(
+    ctx: Context<AddAllowedPaymentToken>,
+    token_mint: Pubkey,
+) -> Result<()> {
     let at = &mut ctx.accounts.allowed_token;
     at.config = ctx.accounts.config.key();
-    at.token_mint = ctx.accounts.token_mint.key();
+    at.token_mint = token_mint;
     at.bump = ctx.bumps.allowed_token;
 
-    emit!(PointTokenAdded {
-        token_mint: ctx.accounts.token_mint.key(),
-    });
+    emit!(AllowedPaymentTokenAdded { token_mint });
 
     Ok(())
 }
@@ -178,7 +182,8 @@ pub fn handle_add_allowed_point_token(ctx: Context<AddAllowedPointToken>) -> Res
 // ── Remove Allowed Point Token ─────────────────────────────────────────────
 
 #[derive(Accounts)]
-pub struct RemoveAllowedPointToken<'info> {
+#[instruction(token_mint: Pubkey)]
+pub struct RemoveAllowedPaymentToken<'info> {
     #[account(mut)]
     pub owner: Signer<'info>,
 
@@ -189,22 +194,21 @@ pub struct RemoveAllowedPointToken<'info> {
     )]
     pub config: Account<'info, Config>,
 
-    pub token_mint: Account<'info, Mint>,
-
     #[account(
         mut,
         close = owner,
-        seeds = [ALLOWED_POINT_TOKEN_SEED, config.key().as_ref(), token_mint.key().as_ref()],
+        seeds = [ALLOWED_PAYMENT_TOKEN_SEED, config.key().as_ref(), token_mint.as_ref()],
         bump = allowed_token.bump,
         has_one = config,
     )]
-    pub allowed_token: Account<'info, AllowedPointToken>,
+    pub allowed_token: Account<'info, AllowedPaymentToken>,
 }
 
-pub fn handle_remove_allowed_point_token(ctx: Context<RemoveAllowedPointToken>) -> Result<()> {
-    emit!(PointTokenRemoved {
-        token_mint: ctx.accounts.token_mint.key(),
-    });
+pub fn handle_remove_allowed_payment_token(
+    _ctx: Context<RemoveAllowedPaymentToken>,
+    token_mint: Pubkey,
+) -> Result<()> {
+    emit!(AllowedPaymentTokenRemoved { token_mint });
     Ok(())
 }
 

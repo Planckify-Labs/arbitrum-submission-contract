@@ -99,6 +99,66 @@ describe("takumi_pay", () => {
     program.programId
   );
 
+  // Every value-in entrypoint is gated by this marker PDA. Native SOL is keyed
+  // by PublicKey.default, the same sentinel the _sol instructions use.
+  const allowedPaymentTokenPda = (mint: PublicKey): PublicKey =>
+    PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("allowed_payment_token"),
+        configPda.toBuffer(),
+        mint.toBuffer(),
+      ],
+      program.programId
+    )[0];
+
+  // Treasury sweeps fail closed until a cap is configured, and raising a cap is
+  // a loosening so it goes queue -> apply. With withdrawalDelay at 0 both legs
+  // land immediately.
+  const sweepCapPda = (mint: PublicKey): PublicKey =>
+    PublicKey.findProgramAddressSync(
+      [Buffer.from("sweep_cap"), configPda.toBuffer(), mint.toBuffer()],
+      program.programId
+    )[0];
+
+  const raiseSweepCap = async (
+    mint: PublicKey,
+    cap: anchor.BN
+  ): Promise<PublicKey> => {
+    const pda = sweepCapPda(mint);
+    await program.methods
+      .queueSweepCap(mint, cap)
+      .accounts({
+        owner: owner.publicKey,
+        config: configPda,
+        sweepCap: pda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+    await program.methods
+      .applySweepCap(mint)
+      .accounts({
+        owner: owner.publicKey,
+        config: configPda,
+        sweepCap: pda,
+      })
+      .rpc();
+    return pda;
+  };
+
+  const allowPaymentToken = async (mint: PublicKey): Promise<PublicKey> => {
+    const pda = allowedPaymentTokenPda(mint);
+    await program.methods
+      .addAllowedPaymentToken(mint)
+      .accounts({
+        owner: owner.publicKey,
+        config: configPda,
+        allowedToken: pda,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc();
+    return pda;
+  };
+
   // Shared state across tests
   let adminKeypair: Keypair;
   let adminPda: PublicKey;
@@ -127,6 +187,12 @@ describe("takumi_pay", () => {
     expect(config.txCounter.toNumber()).to.equal(0);
     expect(config.pointDepositCounter.toNumber()).to.equal(0);
     expect(config.withdrawalDelay.toNumber()).to.equal(0);
+  });
+
+  it("allowlists native SOL for payments", async () => {
+    const pda = await allowPaymentToken(PublicKey.default);
+    const at = await program.account.allowedPaymentToken.fetch(pda);
+    expect(at.tokenMint.toBase58()).to.equal(PublicKey.default.toBase58());
   });
 
   // ── Admin Management ─────────────────────────────────────────────────
@@ -297,6 +363,7 @@ describe("takumi_pay", () => {
           .accounts({
             payer: owner.publicKey,
             config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
             txRecord: txRecordPda,
             refRecord: refRecordPda,
             spendingLimit: null,
@@ -435,6 +502,7 @@ describe("takumi_pay", () => {
         .accounts({
           payer: owner.publicKey,
           config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
           txRecord: txRecordPda,
           refRecord: refRecordPda,
           spendingLimit: null,
@@ -482,6 +550,7 @@ describe("takumi_pay", () => {
           .accounts({
             payer: owner.publicKey,
             config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
             txRecord: txRecordPda,
             refRecord: refRecordPda,
             spendingLimit: null,
@@ -522,6 +591,7 @@ describe("takumi_pay", () => {
           .accounts({
             payer: owner.publicKey,
             config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
             txRecord: txRecordPda,
             refRecord: refRecordPda,
             spendingLimit: null,
@@ -562,6 +632,8 @@ describe("takumi_pay", () => {
         owner.publicKey,
         1_000_000_000 // 1000 tokens
       );
+
+      await allowPaymentToken(tokenMint);
     });
 
     it("creates a token transaction", async () => {
@@ -599,6 +671,7 @@ describe("takumi_pay", () => {
         .accounts({
           payer: owner.publicKey,
           config: configPda,
+          allowedToken: allowedPaymentTokenPda(tokenMint),
           txRecord: txRecordPda,
           refRecord: refRecordPda,
           tokenMint,
@@ -689,6 +762,7 @@ describe("takumi_pay", () => {
           .accounts({
             payer: owner.publicKey,
             config: configPda,
+          allowedToken: allowedPaymentTokenPda(tokenMint),
             txRecord: txRecordPda,
             refRecord: refRecordPda,
             tokenMint,
@@ -747,6 +821,7 @@ describe("takumi_pay", () => {
         .accounts({
           payer: owner.publicKey,
           config: configPda,
+          allowedToken: allowedPaymentTokenPda(tokenMint),
           txRecord: txRecordPda,
           refRecord: refRecordPda,
           tokenMint,
@@ -825,6 +900,7 @@ describe("takumi_pay", () => {
         .accounts({
           payer: owner.publicKey,
           config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
           merchantPayment: merchantPaymentPda,
           platformFeeAccount: platformFeePda,
           instructionsSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -907,6 +983,7 @@ describe("takumi_pay", () => {
           .accounts({
             payer: owner.publicKey,
             config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
             merchantPayment: merchantPaymentPda,
             platformFeeAccount: platformFeePda,
             instructionsSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -983,6 +1060,7 @@ describe("takumi_pay", () => {
           .accounts({
             payer: owner.publicKey,
             config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
             merchantPayment: merchantPaymentPda,
             platformFeeAccount: platformFeePda,
             instructionsSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -1056,6 +1134,7 @@ describe("takumi_pay", () => {
           .accounts({
             payer: owner.publicKey,
             config: configPda,
+          allowedToken: allowedPaymentTokenPda(PublicKey.default),
             merchantPayment: merchantPaymentPda,
             platformFeeAccount: platformFeePda,
             instructionsSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,
@@ -1138,6 +1217,7 @@ describe("takumi_pay", () => {
         .accounts({
           payer: owner.publicKey,
           config: configPda,
+          allowedToken: allowedPaymentTokenPda(tokenMint),
           merchantPayment: merchantPaymentPda,
           platformFeeAccount: platformFeePda,
           tokenMint,
@@ -1407,12 +1487,48 @@ describe("takumi_pay", () => {
       }
     });
 
-    after(async () => {
-      // Reset delay to 0 for subsequent tests
+    it("rejects lowering the delay in a single call", async () => {
+      // The original bypass: setWithdrawalDelay(0) then withdraw() in one
+      // transaction made the timelock decorative.
+      try {
+        await program.methods
+          .setWithdrawalDelay(new anchor.BN(0))
+          .accounts({ owner: owner.publicKey, config: configPda })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        expect(err.error?.errorCode?.code).to.equal("NotALoosening");
+      }
+
+      const config = await program.account.config.fetch(configPda);
+      expect(config.withdrawalDelay.toNumber()).to.equal(2);
+    });
+
+    it("lowers the delay only after waiting it out", async () => {
       await program.methods
-        .setWithdrawalDelay(new anchor.BN(0))
+        .queueWithdrawalDelay(new anchor.BN(0))
         .accounts({ owner: owner.publicKey, config: configPda })
         .rpc();
+
+      // Still locked — the reduction is subject to the delay in force.
+      try {
+        await program.methods
+          .applyWithdrawalDelay()
+          .accounts({ owner: owner.publicKey, config: configPda })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        expect(err.error?.errorCode?.code).to.equal("PendingChangeLocked");
+      }
+
+      await sleep(3000);
+      await program.methods
+        .applyWithdrawalDelay()
+        .accounts({ owner: owner.publicKey, config: configPda })
+        .rpc();
+
+      const config = await program.account.config.fetch(configPda);
+      expect(config.withdrawalDelay.toNumber()).to.equal(0);
     });
   });
 
@@ -1444,28 +1560,10 @@ describe("takumi_pay", () => {
       );
     });
 
-    it("adds an allowed point token", async () => {
-      const [allowedPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("allowed_pt"),
-          configPda.toBuffer(),
-          secondTokenMint.toBuffer(),
-        ],
-        program.programId
-      );
+    it("adds an allowed payment token", async () => {
+      const allowedPda = await allowPaymentToken(secondTokenMint);
 
-      await program.methods
-        .addAllowedPointToken()
-        .accounts({
-          owner: owner.publicKey,
-          config: configPda,
-          tokenMint: secondTokenMint,
-          allowedToken: allowedPda,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc();
-
-      const at = await program.account.allowedPointToken.fetch(allowedPda);
+      const at = await program.account.allowedPaymentToken.fetch(allowedPda);
       expect(at.tokenMint.toBase58()).to.equal(secondTokenMint.toBase58());
     });
 
@@ -1491,14 +1589,7 @@ describe("takumi_pay", () => {
         ],
         program.programId
       );
-      const [allowedPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("allowed_pt"),
-          configPda.toBuffer(),
-          secondTokenMint.toBuffer(),
-        ],
-        program.programId
-      );
+      const allowedPda = allowedPaymentTokenPda(secondTokenMint);
 
       const payerAta = getAssociatedTokenAddressSync(
         secondTokenMint,
@@ -1556,14 +1647,7 @@ describe("takumi_pay", () => {
         ],
         program.programId
       );
-      const [allowedPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("allowed_pt"),
-          configPda.toBuffer(),
-          secondTokenMint.toBuffer(),
-        ],
-        program.programId
-      );
+      const allowedPda = allowedPaymentTokenPda(secondTokenMint);
 
       const payerAta = getAssociatedTokenAddressSync(
         secondTokenMint,
@@ -1629,14 +1713,7 @@ describe("takumi_pay", () => {
         ],
         program.programId
       );
-      const [allowedPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("allowed_pt"),
-          configPda.toBuffer(),
-          secondTokenMint.toBuffer(),
-        ],
-        program.programId
-      );
+      const allowedPda = allowedPaymentTokenPda(secondTokenMint);
 
       const payerAta = getAssociatedTokenAddressSync(
         secondTokenMint,
@@ -1683,22 +1760,14 @@ describe("takumi_pay", () => {
         .rpc();
     });
 
-    it("removes an allowed point token", async () => {
-      const [allowedPda] = PublicKey.findProgramAddressSync(
-        [
-          Buffer.from("allowed_pt"),
-          configPda.toBuffer(),
-          secondTokenMint.toBuffer(),
-        ],
-        program.programId
-      );
+    it("removes an allowed payment token", async () => {
+      const allowedPda = allowedPaymentTokenPda(secondTokenMint);
 
       await program.methods
-        .removeAllowedPointToken()
+        .removeAllowedPaymentToken(secondTokenMint)
         .accounts({
           owner: owner.publicKey,
           config: configPda,
-          tokenMint: secondTokenMint,
           allowedToken: allowedPda,
         })
         .rpc();
@@ -1711,6 +1780,51 @@ describe("takumi_pay", () => {
   // ── Treasury ─────────────────────────────────────────────────────────
 
   describe("Treasury", () => {
+    before(async () => {
+      // Sweeps fail closed until a cap exists — configure both native and SPL.
+      const unlimited = new anchor.BN("18446744073709551615"); // u64::MAX
+      await raiseSweepCap(PublicKey.default, unlimited);
+      await raiseSweepCap(tokenMint, unlimited);
+    });
+
+    it("rejects a sweep for a token with no cap configured", async () => {
+      const uncapped = await createMint(
+        connection,
+        owner.payer,
+        owner.publicKey,
+        null,
+        6
+      );
+
+      try {
+        await program.methods
+          .sweepMerchantBackingToken(new anchor.BN(1))
+          .accounts({
+            owner: owner.publicKey,
+            config: configPda,
+          sweepCap: sweepCapPda(tokenMint),
+            sweepCap: sweepCapPda(uncapped),
+            tokenMint: uncapped,
+            vaultTokenAccount: getAssociatedTokenAddressSync(
+              uncapped,
+              configPda,
+              true
+            ),
+            recipientTokenAccount: getAssociatedTokenAddressSync(
+              uncapped,
+              owner.publicKey
+            ),
+            tokenProgram: TOKEN_PROGRAM_ID,
+          } as any)
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        // The cap PDA does not exist, so account resolution fails before the
+        // handler — either way the sweep is denied.
+        expect(err).to.exist;
+      }
+    });
+
     it("sweeps platform fees SOL", async () => {
       const recipient = Keypair.generate();
 
@@ -1733,6 +1847,7 @@ describe("takumi_pay", () => {
         .accounts({
           owner: owner.publicKey,
           config: configPda,
+          sweepCap: sweepCapPda(PublicKey.default),
           platformFeeAccount: platformFeePda,
           recipient: recipient.publicKey,
           systemProgram: SystemProgram.programId,
@@ -1766,6 +1881,7 @@ describe("takumi_pay", () => {
           .accounts({
             owner: owner.publicKey,
             config: configPda,
+          sweepCap: sweepCapPda(PublicKey.default),
             platformFeeAccount: platformFeePda,
             recipient: owner.publicKey,
             systemProgram: SystemProgram.programId,
@@ -1785,6 +1901,7 @@ describe("takumi_pay", () => {
         .accounts({
           owner: owner.publicKey,
           config: configPda,
+          sweepCap: sweepCapPda(PublicKey.default),
           recipient: recipient.publicKey,
           systemProgram: SystemProgram.programId,
         })
@@ -1823,6 +1940,7 @@ describe("takumi_pay", () => {
         .accounts({
           owner: owner.publicKey,
           config: configPda,
+          sweepCap: sweepCapPda(tokenMint),
           tokenMint,
           platformFeeAccount: platformFeePda,
           vaultTokenAccount: vaultAta,
@@ -1852,6 +1970,7 @@ describe("takumi_pay", () => {
         .accounts({
           owner: owner.publicKey,
           config: configPda,
+          sweepCap: sweepCapPda(tokenMint),
           tokenMint,
           vaultTokenAccount: vaultAta,
           recipientTokenAccount: recipientAta.address,
@@ -1906,6 +2025,47 @@ describe("takumi_pay", () => {
   });
 
   // ── Withdrawal Delay Edge Cases ──────────────────────────────────────
+
+  describe("Sweep Cap", () => {
+    it("lowers immediately but rejects raising in a single call", async () => {
+      const pda = sweepCapPda(tokenMint);
+
+      // Tightening is immediate.
+      await program.methods
+        .setSweepCap(tokenMint, new anchor.BN(1_000))
+        .accounts({
+          owner: owner.publicKey,
+          config: configPda,
+          sweepCap: pda,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      let sc = await program.account.sweepCap.fetch(pda);
+      expect(sc.cap.toNumber()).to.equal(1_000);
+
+      // Raising in one call would put the rate limit one call from defeat.
+      try {
+        await program.methods
+          .setSweepCap(tokenMint, new anchor.BN(5_000))
+          .accounts({
+            owner: owner.publicKey,
+            config: configPda,
+            sweepCap: pda,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        expect.fail("Should have thrown");
+      } catch (err: any) {
+        expect(err.error?.errorCode?.code).to.equal("NotALoosening");
+      }
+
+      // Queue + apply is the supported path.
+      await raiseSweepCap(tokenMint, new anchor.BN(5_000));
+      sc = await program.account.sweepCap.fetch(pda);
+      expect(sc.cap.toNumber()).to.equal(5_000);
+    });
+  });
 
   describe("Withdrawal Delay Edge Cases", () => {
     it("rejects delay exceeding maximum (7 days)", async () => {

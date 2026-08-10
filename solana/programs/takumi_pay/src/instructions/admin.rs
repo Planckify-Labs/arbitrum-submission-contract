@@ -38,6 +38,8 @@ pub fn handle_initialize(ctx: Context<Initialize>, backend_signer: Pubkey) -> Re
     config.point_deposit_counter = 0;
     config.withdrawal_delay = 0;
     config.withdrawal_nonce = 0;
+    config.pending_withdrawal_delay = 0;
+    config.pending_delay_unlock_time = 0;
     config.bump = ctx.bumps.config;
 
     Ok(())

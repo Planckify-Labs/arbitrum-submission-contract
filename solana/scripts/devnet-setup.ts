@@ -198,6 +198,35 @@ async function setup(
     console.log("\n✓ Owner already has", currentBalance / 1_000_000, "mock USDC");
   }
 
+  // Step 4: Allowlist the mint for payments. Every value-in entrypoint
+  // (create_transaction_*, process_merchant_payment_*, deposit_points) is gated
+  // on this PDA existing, so without it the contract accepts nothing.
+  const [allowedTokenPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("allowed_payment_token"),
+      configPda.toBuffer(),
+      mockUsdcMint.toBuffer(),
+    ],
+    program.programId
+  );
+
+  const allowedInfo = await connection.getAccountInfo(allowedTokenPda);
+  if (allowedInfo) {
+    console.log("\n✓ Mock USDC already allowlisted for payments");
+  } else {
+    console.log("\nAllowlisting mock USDC for payments...");
+    await program.methods
+      .addAllowedPaymentToken(mockUsdcMint)
+      .accounts({
+        owner: owner.publicKey,
+        config: configPda,
+        allowedToken: allowedTokenPda,
+        systemProgram: SystemProgram.programId,
+      } as any)
+      .rpc();
+    console.log("✓ Allowlisted:", allowedTokenPda.toBase58());
+  }
+
   // Save state
   const state = {
     programId: program.programId.toBase58(),
@@ -289,6 +318,14 @@ async function testMerchantPayment(
     [Buffer.from("platform_fee"), configPda.toBuffer(), mockUsdcMint.toBuffer()],
     program.programId
   );
+  const [allowedTokenPda] = PublicKey.findProgramAddressSync(
+    [
+      Buffer.from("allowed_payment_token"),
+      configPda.toBuffer(),
+      mockUsdcMint.toBuffer(),
+    ],
+    program.programId
+  );
 
   const payerAta = getAssociatedTokenAddressSync(mockUsdcMint, owner.publicKey);
   const vaultAta = getAssociatedTokenAddressSync(mockUsdcMint, configPda, true);
@@ -313,6 +350,7 @@ async function testMerchantPayment(
         merchantPayment: merchantPaymentPda,
         platformFeeAccount: platformFeePda,
         tokenMint: mockUsdcMint,
+        allowedToken: allowedTokenPda,
         payerTokenAccount: payerAta,
         vaultTokenAccount: vaultAta,
         instructionsSysvar: anchor.web3.SYSVAR_INSTRUCTIONS_PUBKEY,

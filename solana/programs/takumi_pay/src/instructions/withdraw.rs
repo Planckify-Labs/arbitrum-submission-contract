@@ -126,12 +126,79 @@ pub struct SetWithdrawalDelay<'info> {
     pub config: Account<'info, Config>,
 }
 
+/// Raises the withdrawal delay. Immediate — tightening a control is always safe.
+///
+/// Lowering must go through `queue_withdrawal_delay` / `apply_withdrawal_delay`
+/// so the reduction is itself subject to the delay currently in force. Without
+/// that the timelock is decorative: an owner key that leaks would simply set the
+/// delay to 0 and withdraw in the same transaction.
 pub fn handle_set_withdrawal_delay(ctx: Context<SetWithdrawalDelay>, delay: i64) -> Result<()> {
     require!(delay >= 0 && delay <= MAX_WITHDRAWAL_DELAY, TakumiPayError::DelayExceedsMax);
+    require!(
+        delay >= ctx.accounts.config.withdrawal_delay,
+        TakumiPayError::NotALoosening
+    );
 
     ctx.accounts.config.withdrawal_delay = delay;
 
     emit!(WithdrawalDelayUpdated { delay });
+    Ok(())
+}
+
+pub fn handle_queue_withdrawal_delay(ctx: Context<SetWithdrawalDelay>, delay: i64) -> Result<()> {
+    require!(delay >= 0, TakumiPayError::DelayExceedsMax);
+    let config = &mut ctx.accounts.config;
+    require!(
+        delay < config.withdrawal_delay,
+        TakumiPayError::NotALoosening
+    );
+
+    let now = Clock::get()?.unix_timestamp;
+    let unlock_time = now
+        .checked_add(config.withdrawal_delay)
+        .ok_or(TakumiPayError::Overflow)?;
+
+    config.pending_withdrawal_delay = delay;
+    config.pending_delay_unlock_time = unlock_time;
+
+    emit!(PendingDelayQueued { delay, unlock_time });
+    Ok(())
+}
+
+pub fn handle_apply_withdrawal_delay(ctx: Context<SetWithdrawalDelay>) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let config = &mut ctx.accounts.config;
+
+    require!(
+        config.pending_delay_unlock_time > 0,
+        TakumiPayError::NoPendingChange
+    );
+    require!(
+        now >= config.pending_delay_unlock_time,
+        TakumiPayError::PendingChangeLocked
+    );
+
+    let delay = config.pending_withdrawal_delay;
+    config.withdrawal_delay = delay;
+    config.pending_withdrawal_delay = 0;
+    config.pending_delay_unlock_time = 0;
+
+    emit!(WithdrawalDelayUpdated { delay });
+    Ok(())
+}
+
+pub fn handle_cancel_withdrawal_delay(ctx: Context<SetWithdrawalDelay>) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+
+    require!(
+        config.pending_delay_unlock_time > 0,
+        TakumiPayError::NoPendingChange
+    );
+    let delay = config.pending_withdrawal_delay;
+    config.pending_withdrawal_delay = 0;
+    config.pending_delay_unlock_time = 0;
+
+    emit!(PendingDelayCancelled { delay });
     Ok(())
 }
 

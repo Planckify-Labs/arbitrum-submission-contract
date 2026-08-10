@@ -25,11 +25,11 @@ pub struct DepositPoints<'info> {
     pub token_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
-        seeds = [ALLOWED_POINT_TOKEN_SEED, config.key().as_ref(), token_mint.key().as_ref()],
+        seeds = [ALLOWED_PAYMENT_TOKEN_SEED, config.key().as_ref(), token_mint.key().as_ref()],
         bump = allowed_token.bump,
         has_one = config,
     )]
-    pub allowed_token: Account<'info, AllowedPointToken>,
+    pub allowed_token: Account<'info, AllowedPaymentToken>,
 
     #[account(
         init,

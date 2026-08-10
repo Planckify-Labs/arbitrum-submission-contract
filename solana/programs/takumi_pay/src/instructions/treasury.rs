@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, Mint, TokenInterface, TokenAccount, TransferChecked};
 
 use crate::errors::TakumiPayError;
+use crate::instructions::sweep_cap::consume_sweep_allowance;
 use crate::state::*;
 
 // ── Sweep Platform Fees SOL ────────────────────────────────────────────────
@@ -17,6 +18,14 @@ pub struct SweepPlatformFeesSol<'info> {
         bump = config.bump,
     )]
     pub config: Account<'info, Config>,
+
+    #[account(
+        mut,
+        seeds = [SWEEP_CAP_SEED, config.key().as_ref(), Pubkey::default().as_ref()],
+        bump = sweep_cap.bump,
+        has_one = config,
+    )]
+    pub sweep_cap: Account<'info, SweepCap>,
 
     #[account(
         mut,
@@ -38,6 +47,7 @@ pub fn handle_sweep_platform_fees_sol(
     amount: u64,
 ) -> Result<()> {
     require!(amount > 0, TakumiPayError::ZeroAmount);
+    consume_sweep_allowance(&mut ctx.accounts.sweep_cap, amount)?;
     require!(
         ctx.accounts.recipient.key() != Pubkey::default(),
         TakumiPayError::ZeroRecipient
@@ -90,6 +100,14 @@ pub struct SweepPlatformFeesToken<'info> {
     )]
     pub config: Account<'info, Config>,
 
+    #[account(
+        mut,
+        seeds = [SWEEP_CAP_SEED, config.key().as_ref(), token_mint.key().as_ref()],
+        bump = sweep_cap.bump,
+        has_one = config,
+    )]
+    pub sweep_cap: Account<'info, SweepCap>,
+
     pub token_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
@@ -118,6 +136,7 @@ pub fn handle_sweep_platform_fees_token(
     amount: u64,
 ) -> Result<()> {
     require!(amount > 0, TakumiPayError::ZeroAmount);
+    consume_sweep_allowance(&mut ctx.accounts.sweep_cap, amount)?;
 
     let pfa = &mut ctx.accounts.platform_fee_account;
     require!(
@@ -169,6 +188,14 @@ pub struct SweepMerchantBackingSol<'info> {
     )]
     pub config: Account<'info, Config>,
 
+    #[account(
+        mut,
+        seeds = [SWEEP_CAP_SEED, config.key().as_ref(), Pubkey::default().as_ref()],
+        bump = sweep_cap.bump,
+        has_one = config,
+    )]
+    pub sweep_cap: Account<'info, SweepCap>,
+
     /// CHECK: Recipient for SOL. Validated as non-default in handler.
     #[account(mut)]
     pub recipient: AccountInfo<'info>,
@@ -181,6 +208,7 @@ pub fn handle_sweep_merchant_backing_sol(
     amount: u64,
 ) -> Result<()> {
     require!(amount > 0, TakumiPayError::ZeroAmount);
+    consume_sweep_allowance(&mut ctx.accounts.sweep_cap, amount)?;
     require!(
         ctx.accounts.recipient.key() != Pubkey::default(),
         TakumiPayError::ZeroRecipient
@@ -226,6 +254,14 @@ pub struct SweepMerchantBackingToken<'info> {
     )]
     pub config: Account<'info, Config>,
 
+    #[account(
+        mut,
+        seeds = [SWEEP_CAP_SEED, config.key().as_ref(), token_mint.key().as_ref()],
+        bump = sweep_cap.bump,
+        has_one = config,
+    )]
+    pub sweep_cap: Account<'info, SweepCap>,
+
     pub token_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
@@ -246,6 +282,7 @@ pub fn handle_sweep_merchant_backing_token(
     amount: u64,
 ) -> Result<()> {
     require!(amount > 0, TakumiPayError::ZeroAmount);
+    consume_sweep_allowance(&mut ctx.accounts.sweep_cap, amount)?;
 
     let config_bump = ctx.accounts.config.bump;
     let seeds: &[&[u8]] = &[CONFIG_SEED, &[config_bump]];
