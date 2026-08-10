@@ -4,16 +4,25 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @title TakumiWallet
-/// @notice Payment contract supporting ERC20 + native token transactions and point deposits.
+/// @title TakumiPay
+/// @notice Payment contract supporting ERC20 + native token transactions, merchant
+///         payments against backend-signed EIP-712 quotes, and point deposits.
 ///         Deployed behind a UUPS proxy for upgradeability.
 /// @dev Storage layout must never be reordered between upgrades. Append new slots only.
-///      Storage gap __gap reserves 50 slots for future base-contract extensions.
-contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable {
+///      Storage gap __gap reserves 50 slots for future extensions.
+///
+///      Every OpenZeppelin base here (Initializable, UUPSUpgradeable,
+///      ReentrancyGuardUpgradeable, EIP712Upgradeable) uses ERC-7201 namespaced
+///      storage, so none of them consume sequential slots — this contract's state
+///      starts at slot 0.
+contract TakumiPay is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradeable, EIP712Upgradeable {
     using SafeERC20 for IERC20;
+    using ECDSA for bytes32;
 
     // ====== Roles ======
 
@@ -39,7 +48,8 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
 
     // ====== Input Validation ======
 
-    uint256 public constant MAX_STRING_LENGTH = 256;
+    /// @dev Mirrors MAX_STRING_LEN on the Stellar and Solana sibling contracts.
+    uint256 public constant MAX_STRING_LENGTH = 64;
     uint256 public constant MAX_PAGINATION_LIMIT = 500;
 
     struct WithdrawalRequest {
@@ -97,15 +107,92 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     mapping(string => uint256) private pointRefToDeposit;
     mapping(address => uint256[]) private userPointDeposits;
 
-    mapping(address => bool) public allowedPointTokens;
-    address[] private allowedPointTokenList;
-    mapping(address => uint256) private allowedPointTokenListIndex; // 1-based index for O(1) removal
+    // ====== Payment Token Allowlist ======
+    // A single allowlist gates every entrypoint that moves value in:
+    // createTransaction, createTransactionBatch, processMerchantPayment and
+    // depositPoints. Native (address(0)) is allowlisted explicitly like any
+    // other token — there is no implicit bypass.
+
+    mapping(address => bool) public allowedPaymentTokens;
+    address[] private allowedPaymentTokenList;
+    mapping(address => uint256) private allowedPaymentTokenListIndex; // 1-based index for O(1) removal
     bool public pointDepositsPaused;
 
-    // ====== Storage Gap ======
-    // Reserve 50 slots for future upgrades. Decrement when adding new state variables.
+    // ====== Merchant Payments ======
 
-    uint256[50] private __gap;
+    struct QuoteCommitment {
+        string  refId;
+        string  merchantId;
+        address tokenAddress;
+        uint256 amount;
+        uint256 platformFeeAmount;
+        uint256 fiatAmountMinor;
+        bytes3  fiatCurrency;
+        uint256 exchangeRateId;
+        uint256 expiresAt;
+    }
+
+    struct MerchantPayment {
+        address payer;
+        address tokenAddress;
+        string  merchantId;
+        string  refId;
+        uint256 amount;
+        uint256 platformFeeAmount;
+        uint256 fiatAmountMinor;
+        bytes3  fiatCurrency;
+        uint256 exchangeRateId;
+        uint256 timestamp;
+    }
+
+    address public backendSigner;
+    mapping(bytes32 => bool) private _consumedRefs;
+    mapping(bytes32 => MerchantPayment) private _payments;
+    mapping(address => uint256) public platformFeeAccrued;
+
+    // ====== Sweep Rate Limit ======
+    // Treasury sweeps deliberately bypass the withdrawal timelock — merchant float
+    // has to settle daily, and a 7-day queue would break that. A per-token rolling
+    // cap gives back the property the timelock was there for: an owner key that
+    // leaks can only drain `sweepCap` per window, and every window is visible
+    // on-chain, instead of emptying the contract in one transaction.
+
+    uint256 public constant SWEEP_WINDOW = 1 days;
+    /// @dev Sentinel meaning "no cap". Set explicitly — it is not the default.
+    uint256 public constant SWEEP_CAP_UNLIMITED = type(uint256).max;
+
+    /// @dev token => max sweepable per window. 0 (the default) blocks sweeps
+    ///      entirely. Unlike `maxTransactionAmount`, where 0 means "no limit",
+    ///      this is a security control, so an unconfigured value must fail closed.
+    mapping(address => uint256) public sweepCap;
+    mapping(address => uint256) public sweptInWindow;
+    mapping(address => uint256) public sweepWindowStart;
+
+    // ====== Pending Security-Loosening Changes ======
+    // Raising a cap or lowering the withdrawal delay weakens a control, so it is
+    // itself subject to `withdrawalDelay`. Without this the timelock is decorative:
+    // an attacker holding the owner key would just call setWithdrawalDelay(0) and
+    // withdraw in the same transaction. Tightening is always immediate.
+
+    struct PendingChange {
+        uint256 value;
+        uint256 unlockTime;
+    }
+
+    mapping(bytes32 => PendingChange) private _pendingChanges;
+
+    // ====== Storage Gap ======
+    // Reserve slots for future upgrades. Decrement when adding new state variables.
+
+    uint256[46] private __gap;
+
+    // ====== EIP-712 ======
+
+    bytes32 public constant QUOTE_TYPEHASH = keccak256(
+        "QuoteCommitment(string refId,string merchantId,address tokenAddress,"
+        "uint256 amount,uint256 platformFeeAmount,uint256 fiatAmountMinor,"
+        "bytes3 fiatCurrency,uint256 exchangeRateId,uint256 expiresAt)"
+    );
 
     // ====== Events ======
 
@@ -136,6 +223,9 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     event WithdrawalExecuted(bytes32 indexed withdrawalId);
     event WithdrawalCancelled(bytes32 indexed withdrawalId);
     event WithdrawalDelayUpdated(uint256 delay);
+    event SweepCapUpdated(address indexed token, uint256 cap);
+    event PendingChangeQueued(bytes32 indexed key, uint256 value, uint256 unlockTime);
+    event PendingChangeCancelled(bytes32 indexed key);
     event TokenRecovered(address indexed token, address indexed to, uint256 amount);
     event PointDepositCreated(
         uint256 indexed depositId,
@@ -145,13 +235,33 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         uint256 amount,
         uint256 timestamp
     );
-    event PointTokenAdded(address indexed token);
-    event PointTokenRemoved(address indexed token);
+    event AllowedPaymentTokenAdded(address indexed token);
+    event AllowedPaymentTokenRemoved(address indexed token);
     event PointDepositsPausedToggled(bool paused);
     event OwnershipTransferInitiated(address indexed currentOwner, address indexed pendingOwner);
     event OwnershipTransferCancelled(address indexed cancelledPendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-    event Upgraded(address indexed implementation);
+
+    /// @notice Emitted on every successful merchant payment.
+    /// @dev `refIdHash` / `merchantIdHash` are indexed, so Solidity stores only the
+    ///      keccak256 of the value in the topic — filterable but unreadable. The
+    ///      non-indexed `refId` / `merchantId` carry the readable values in data so
+    ///      log indexers and subgraphs can consume them.
+    event MerchantPaymentProcessed(
+        string  indexed refIdHash,
+        string  indexed merchantIdHash,
+        address indexed payer,
+        string  refId,
+        string  merchantId,
+        address tokenAddress,
+        uint256 amount,
+        uint256 platformFeeAmount,
+        uint256 fiatAmountMinor,
+        uint256 exchangeRateId
+    );
+    event PlatformFeesSwept(address indexed token, address indexed recipient, uint256 amount);
+    event MerchantBackingSwept(address indexed token, address indexed recipient, uint256 amount);
+    event BackendSignerRotated(address indexed previous, address indexed next);
 
     // ====== Errors ======
 
@@ -163,6 +273,26 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     error ZeroAmount();
     error AlreadyOwner();
     error NotPendingOwner();
+    error TimelockActive();
+    error TokenNotAllowed();
+    error InvalidStringLength();
+    error InsufficientBalance();
+    error QuoteExpired();
+    error RefConsumed();
+    error BadQuote();
+    error FeeExceedsAmount();
+    error FeeAmountInvalid();
+    error PaymentNotFound();
+    error ZeroSigner();
+    error ZeroRecipient();
+    error SweepCapNotSet();
+    error SweepCapExceeded();
+    error NotALoosening();
+    error NoPendingChange();
+    error TimelockNotExpired();
+    error NativeAmountMismatch();
+    error UnexpectedNative();
+    error NativeTransferFailed();
 
     // ====== Modifiers ======
 
@@ -195,11 +325,15 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
 
     /// @notice Initializes the proxy. Must be called exactly once after deployment.
     /// @param initialOwner Address that will own the contract.
-    function initialize(address initialOwner) external initializer {
+    /// @param initialBackendSigner Address of the backend signer that produces EIP-712 quote signatures.
+    function initialize(address initialOwner, address initialBackendSigner) external initializer {
         if (initialOwner == address(0)) revert ZeroAddress();
+        if (initialBackendSigner == address(0)) revert ZeroSigner();
         __ReentrancyGuard_init();
         __UUPSUpgradeable_init();
+        __EIP712_init("TakumiPay", "1");
         owner = initialOwner;
+        backendSigner = initialBackendSigner;
     }
 
     // ====== UUPS Upgrade Authorization ======
@@ -208,8 +342,13 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
     function _authorizeUpgrade(address newImplementation) internal override onlyOwner {}
 
     /// @notice Returns the current implementation version string.
-    function version() external pure virtual returns (string memory) {
-        return "1.0.0";
+    function version() external pure returns (string memory) {
+        return "2.0.0";
+    }
+
+    /// @notice Returns the EIP-712 domain separator used for quote verification.
+    function DOMAIN_SEPARATOR() external view returns (bytes32) {
+        return _domainSeparatorV4();
     }
 
     // ====== Ownership Transfer (two-step pattern) ======
@@ -261,16 +400,12 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         uint256 amount
     ) external payable whenNotPaused nonReentrant {
         _validateStrings(bookingId, productVariantId, refId);
+        if (!allowedPaymentTokens[tokenAddress]) revert TokenNotAllowed();
         if (tokenAddress == address(0)) {
             require(msg.value == amount, "Incorrect amount sent");
         } else {
             require(msg.value == 0, "ETH not required for ERC20");
-            uint256 balanceBefore = IERC20(tokenAddress).balanceOf(address(this));
-            IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
-            require(
-                IERC20(tokenAddress).balanceOf(address(this)) - balanceBefore == amount,
-                "Fee-on-transfer tokens not supported"
-            );
+            _pullToken(tokenAddress, msg.sender, amount);
         }
         _recordTransaction(msg.sender, bookingId, exchangeRateId, productVariantId, tokenAddress, refId, amount);
     }
@@ -287,6 +422,8 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         for (uint256 i = 0; i < len; i++) {
             require(params[i].amount > 0, "Amount must be greater than 0");
             _validateStrings(params[i].bookingId, params[i].productVariantId, params[i].refId);
+
+            if (!allowedPaymentTokens[params[i].tokenAddress]) revert TokenNotAllowed();
 
             // Check existing refIds before any transfers
             require(refToTx[params[i].refId] == 0, "refId must be unique");
@@ -316,12 +453,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         // Phase 3: Execute all ERC20 transfers
         for (uint256 i = 0; i < len; i++) {
             if (params[i].tokenAddress != address(0)) {
-                uint256 balanceBefore = IERC20(params[i].tokenAddress).balanceOf(address(this));
-                IERC20(params[i].tokenAddress).safeTransferFrom(msg.sender, address(this), params[i].amount);
-                require(
-                    IERC20(params[i].tokenAddress).balanceOf(address(this)) - balanceBefore == params[i].amount,
-                    "Fee-on-transfer tokens not supported"
-                );
+                _pullToken(params[i].tokenAddress, msg.sender, params[i].amount);
             }
         }
 
@@ -390,12 +522,144 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         );
     }
 
+    // ====== Merchant Payments ======
+
+    /// @notice Processes a merchant payment using a backend-signed EIP-712 quote.
+    /// @param quote The QuoteCommitment struct with payment details.
+    /// @param backendSignature The EIP-712 signature produced by backendSigner.
+    function processMerchantPayment(
+        QuoteCommitment calldata quote,
+        bytes calldata backendSignature
+    ) external payable whenNotPaused nonReentrant {
+        // Cheap validations first, so a malformed quote never pays for an ECDSA recover.
+        if (quote.amount == 0) revert ZeroAmount();
+        if (quote.platformFeeAmount > quote.amount) revert FeeExceedsAmount();
+        if (!_isValidString(quote.refId) || !_isValidString(quote.merchantId)) {
+            revert InvalidStringLength();
+        }
+        if (block.timestamp > quote.expiresAt) revert QuoteExpired();
+        if (!allowedPaymentTokens[quote.tokenAddress]) revert TokenNotAllowed();
+
+        bytes32 refKey = keccak256(bytes(quote.refId));
+        if (_consumedRefs[refKey]) revert RefConsumed();
+
+        bytes32 structHash = keccak256(abi.encode(
+            QUOTE_TYPEHASH,
+            keccak256(bytes(quote.refId)),
+            keccak256(bytes(quote.merchantId)),
+            quote.tokenAddress,
+            quote.amount,
+            quote.platformFeeAmount,
+            quote.fiatAmountMinor,
+            quote.fiatCurrency,
+            quote.exchangeRateId,
+            quote.expiresAt
+        ));
+        bytes32 digest = _hashTypedDataV4(structHash);
+        if (ECDSA.recover(digest, backendSignature) != backendSigner) revert BadQuote();
+
+        if (quote.tokenAddress == address(0)) {
+            if (msg.value != quote.amount) revert NativeAmountMismatch();
+        } else {
+            if (msg.value != 0) revert UnexpectedNative();
+            _pullToken(quote.tokenAddress, msg.sender, quote.amount);
+        }
+
+        _consumedRefs[refKey] = true;
+        _payments[refKey] = MerchantPayment({
+            payer:             msg.sender,
+            tokenAddress:      quote.tokenAddress,
+            merchantId:        quote.merchantId,
+            refId:             quote.refId,
+            amount:            quote.amount,
+            platformFeeAmount: quote.platformFeeAmount,
+            fiatAmountMinor:   quote.fiatAmountMinor,
+            fiatCurrency:      quote.fiatCurrency,
+            exchangeRateId:    quote.exchangeRateId,
+            timestamp:         block.timestamp
+        });
+        platformFeeAccrued[quote.tokenAddress] += quote.platformFeeAmount;
+
+        emit MerchantPaymentProcessed(
+            quote.refId,
+            quote.merchantId,
+            msg.sender,
+            quote.refId,
+            quote.merchantId,
+            quote.tokenAddress,
+            quote.amount,
+            quote.platformFeeAmount,
+            quote.fiatAmountMinor,
+            quote.exchangeRateId
+        );
+    }
+
+    /// @notice Returns the MerchantPayment record for a given refId.
+    /// @dev Reverts when the ref was never paid, matching getTransactionByRef.
+    function getMerchantPaymentByRef(string calldata refId)
+        external view returns (MerchantPayment memory)
+    {
+        MerchantPayment memory payment = _payments[keccak256(bytes(refId))];
+        if (payment.payer == address(0)) revert PaymentNotFound();
+        return payment;
+    }
+
+    // ====== Treasury ======
+
+    /// @notice Sweeps platform fees (bounded by accrued amount) to a recipient.
+    function sweepPlatformFees(address token, address recipient, uint256 amount)
+        external onlyOwner nonReentrant
+    {
+        if (amount == 0 || amount > platformFeeAccrued[token]) revert FeeAmountInvalid();
+        _consumeSweepAllowance(token, amount);
+        platformFeeAccrued[token] -= amount;
+        _transferOutMerchant(token, recipient, amount);
+        emit PlatformFeesSwept(token, recipient, amount);
+    }
+
+    /// @notice Sweeps merchant backing funds to a recipient (unbounded by fee accrual —
+    ///         this is the float backing merchant payouts), subject to the per-window
+    ///         sweep cap.
+    function sweepMerchantBacking(address token, address recipient, uint256 amount)
+        external onlyOwner nonReentrant
+    {
+        if (amount == 0) revert ZeroAmount();
+        uint256 balance = token == address(0) ? address(this).balance : IERC20(token).balanceOf(address(this));
+        if (amount > balance) revert InsufficientBalance();
+        _consumeSweepAllowance(token, amount);
+        _transferOutMerchant(token, recipient, amount);
+        emit MerchantBackingSwept(token, recipient, amount);
+    }
+
+    /// @dev Charges `amount` against the token's rolling per-window sweep allowance.
+    ///      An unset cap fails closed.
+    function _consumeSweepAllowance(address token, uint256 amount) private {
+        uint256 cap = sweepCap[token];
+        if (cap == 0) revert SweepCapNotSet();
+        if (cap == SWEEP_CAP_UNLIMITED) return;
+
+        uint256 swept = sweptInWindow[token];
+        if (block.timestamp >= sweepWindowStart[token] + SWEEP_WINDOW) {
+            sweepWindowStart[token] = block.timestamp;
+            swept = 0;
+        }
+        if (swept + amount > cap) revert SweepCapExceeded();
+        sweptInWindow[token] = swept + amount;
+    }
+
+    // ====== Signer Rotation ======
+
+    /// @notice Rotates the backend signer address. Only callable by owner.
+    function rotateBackendSigner(address next) external onlyOwner {
+        if (next == address(0)) revert ZeroSigner();
+        emit BackendSignerRotated(backendSigner, next);
+        backendSigner = next;
+    }
+
     // ====== Withdrawals (ERC20 + Native) ======
     // Note: withdraw/withdrawAll bypass the timelock and are only permitted when
     // withdrawalDelay == 0. When a timelock is configured, use queueWithdrawal +
     // executeWithdrawal for all withdrawals.
-
-    error TimelockActive();
 
     function withdraw(address token, address to, uint256 amount) external onlyOwner nonReentrant {
         if (to == address(0)) revert ZeroAddress();
@@ -425,10 +689,84 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
 
     // ====== Withdrawal Timelock ======
 
+    bytes32 private constant WITHDRAWAL_DELAY_KEY = keccak256("withdrawalDelay");
+
+    /// @notice Raises the withdrawal delay. Takes effect immediately — tightening a
+    ///         control is always safe.
+    /// @dev Lowering must go through queueWithdrawalDelay/applyPendingChange so the
+    ///      reduction is itself subject to the delay currently in force.
     function setWithdrawalDelay(uint256 delay) external onlyOwner {
         require(delay <= MAX_WITHDRAWAL_DELAY, "Delay exceeds maximum");
+        if (delay < withdrawalDelay) revert NotALoosening();
         withdrawalDelay = delay;
         emit WithdrawalDelayUpdated(delay);
+    }
+
+    /// @notice Queues a reduction of the withdrawal delay. Callable only to lower it;
+    ///         use setWithdrawalDelay to raise.
+    function queueWithdrawalDelay(uint256 delay) external onlyOwner {
+        if (delay >= withdrawalDelay) revert NotALoosening();
+        _queueLoosening(WITHDRAWAL_DELAY_KEY, delay);
+    }
+
+    function applyWithdrawalDelay() external onlyOwner {
+        withdrawalDelay = _consumePending(WITHDRAWAL_DELAY_KEY);
+        emit WithdrawalDelayUpdated(withdrawalDelay);
+    }
+
+    // ====== Sweep Cap ======
+
+    function _sweepCapKey(address token) private pure returns (bytes32) {
+        return keccak256(abi.encode("sweepCap", token));
+    }
+
+    /// @notice Lowers (tightens) a token's sweep cap. Immediate.
+    /// @dev Raising must go through queueSweepCap — otherwise the rate limit would be
+    ///      one call away from being defeated, the same way an ungated
+    ///      setWithdrawalDelay defeats the timelock.
+    function setSweepCap(address token, uint256 cap) external onlyOwner {
+        if (cap > sweepCap[token]) revert NotALoosening();
+        sweepCap[token] = cap;
+        emit SweepCapUpdated(token, cap);
+    }
+
+    function queueSweepCap(address token, uint256 cap) external onlyOwner {
+        if (cap <= sweepCap[token]) revert NotALoosening();
+        _queueLoosening(_sweepCapKey(token), cap);
+    }
+
+    function applySweepCap(address token) external onlyOwner {
+        uint256 cap = _consumePending(_sweepCapKey(token));
+        sweepCap[token] = cap;
+        emit SweepCapUpdated(token, cap);
+    }
+
+    function cancelPendingChange(bytes32 key) external onlyOwner {
+        if (_pendingChanges[key].unlockTime == 0) revert NoPendingChange();
+        delete _pendingChanges[key];
+        emit PendingChangeCancelled(key);
+    }
+
+    function getPendingChange(bytes32 key) external view returns (PendingChange memory) {
+        return _pendingChanges[key];
+    }
+
+    /// @dev Records a security-loosening change, unlockable after the delay currently
+    ///      in force. Always two-step, even when withdrawalDelay is 0 — the queue/apply
+    ///      pair then completes in the same block, so callers need no special case for
+    ///      whether a delay happens to be configured.
+    function _queueLoosening(bytes32 key, uint256 value) private {
+        uint256 unlockTime = block.timestamp + withdrawalDelay;
+        _pendingChanges[key] = PendingChange({value: value, unlockTime: unlockTime});
+        emit PendingChangeQueued(key, value, unlockTime);
+    }
+
+    function _consumePending(bytes32 key) private returns (uint256 value) {
+        PendingChange memory pending = _pendingChanges[key];
+        if (pending.unlockTime == 0) revert NoPendingChange();
+        if (block.timestamp < pending.unlockTime) revert TimelockNotExpired();
+        value = pending.value;
+        delete _pendingChanges[key];
     }
 
     function queueWithdrawal(address token, address to, uint256 amount) external onlyOwner returns (bytes32) {
@@ -527,7 +865,7 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         emit AdminRemoved(admin);
     }
 
-    function getAllAdmins() external view onlyOwner returns (address[] memory) {
+    function getAllAdmins() external view returns (address[] memory) {
         return adminList;
     }
 
@@ -624,17 +962,12 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         whenPointDepositsActive
         nonReentrant
     {
-        require(allowedPointTokens[tokenAddress], "Token not allowed for point deposits");
+        if (!allowedPaymentTokens[tokenAddress]) revert TokenNotAllowed();
         require(pointRefToDeposit[refId] == 0, "refId already used");
         require(amount > 0, "Amount must be greater than 0");
-        require(bytes(refId).length > 0 && bytes(refId).length <= MAX_STRING_LENGTH, "Invalid refId length");
+        if (!_isValidString(refId)) revert InvalidStringLength();
 
-        uint256 balanceBefore = IERC20(tokenAddress).balanceOf(address(this));
-        IERC20(tokenAddress).safeTransferFrom(msg.sender, address(this), amount);
-        require(
-            IERC20(tokenAddress).balanceOf(address(this)) - balanceBefore == amount,
-            "Fee-on-transfer tokens not supported"
-        );
+        _pullToken(tokenAddress, msg.sender, amount);
 
         pointDepositCounter += 1;
         pointDeposits[pointDepositCounter] = PointDeposit({
@@ -696,42 +1029,43 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         return result;
     }
 
-    // ====== Point Token Whitelist Management ======
+    // ====== Payment Token Allowlist Management ======
 
-    function addAllowedPointToken(address token) external onlyOwner {
-        if (token == address(0)) revert ZeroAddress();
-        require(!allowedPointTokens[token], "Token already allowed");
-        allowedPointTokens[token] = true;
-        allowedPointTokenList.push(token);
-        allowedPointTokenListIndex[token] = allowedPointTokenList.length; // 1-based index
-        emit PointTokenAdded(token);
+    /// @dev address(0) (native) is a valid allowlist entry — it is gated exactly
+    ///      like an ERC-20 rather than bypassing the check.
+    function addAllowedPaymentToken(address token) external onlyOwner {
+        require(!allowedPaymentTokens[token], "Token already allowed");
+        allowedPaymentTokens[token] = true;
+        allowedPaymentTokenList.push(token);
+        allowedPaymentTokenListIndex[token] = allowedPaymentTokenList.length; // 1-based index
+        emit AllowedPaymentTokenAdded(token);
     }
 
-    function removeAllowedPointToken(address token) external onlyOwner {
-        require(allowedPointTokens[token], "Token not in whitelist");
-        require(allowedPointTokenListIndex[token] > 0, "Token index inconsistency");
-        allowedPointTokens[token] = false;
+    function removeAllowedPaymentToken(address token) external onlyOwner {
+        require(allowedPaymentTokens[token], "Token not in allowlist");
+        require(allowedPaymentTokenListIndex[token] > 0, "Token index inconsistency");
+        allowedPaymentTokens[token] = false;
 
         // Swap-and-pop to keep array compact and avoid stale entries
-        uint256 idx = allowedPointTokenListIndex[token] - 1; // convert to 0-based
-        uint256 lastIdx = allowedPointTokenList.length - 1;
+        uint256 idx = allowedPaymentTokenListIndex[token] - 1; // convert to 0-based
+        uint256 lastIdx = allowedPaymentTokenList.length - 1;
         if (idx != lastIdx) {
-            address last = allowedPointTokenList[lastIdx];
-            allowedPointTokenList[idx] = last;
-            allowedPointTokenListIndex[last] = idx + 1; // update 1-based index
+            address last = allowedPaymentTokenList[lastIdx];
+            allowedPaymentTokenList[idx] = last;
+            allowedPaymentTokenListIndex[last] = idx + 1; // update 1-based index
         }
-        allowedPointTokenList.pop();
-        delete allowedPointTokenListIndex[token];
+        allowedPaymentTokenList.pop();
+        delete allowedPaymentTokenListIndex[token];
 
-        emit PointTokenRemoved(token);
+        emit AllowedPaymentTokenRemoved(token);
     }
 
-    function getAllowedPointTokens() external view returns (address[] memory) {
-        return allowedPointTokenList;
+    function getAllowedPaymentTokens() external view returns (address[] memory) {
+        return allowedPaymentTokenList;
     }
 
-    function isAllowedPointToken(address token) external view returns (bool) {
-        return allowedPointTokens[token];
+    function isAllowedPaymentToken(address token) external view returns (bool) {
+        return allowedPaymentTokens[token];
     }
 
     // ====== Point Deposit Pause Control ======
@@ -747,15 +1081,39 @@ contract TakumiWallet is Initializable, UUPSUpgradeable, ReentrancyGuardUpgradea
         return a < b ? a : b;
     }
 
+    /// @dev Pulls `amount` of an ERC20 in and asserts the contract actually received
+    ///      it. Fee-on-transfer tokens would otherwise leave the recorded amount and
+    ///      the real balance out of sync.
+    function _pullToken(address token, address from, uint256 amount) internal {
+        uint256 balanceBefore = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransferFrom(from, address(this), amount);
+        require(
+            IERC20(token).balanceOf(address(this)) - balanceBefore == amount,
+            "Fee-on-transfer tokens not supported"
+        );
+    }
+
+    function _transferOutMerchant(address token, address recipient, uint256 amount) private {
+        if (recipient == address(0)) revert ZeroRecipient();
+        if (token == address(0)) {
+            (bool ok,) = payable(recipient).call{value: amount}("");
+            if (!ok) revert NativeTransferFailed();
+        } else {
+            IERC20(token).safeTransfer(recipient, amount);
+        }
+    }
+
+    function _isValidString(string calldata s) internal pure returns (bool) {
+        uint256 len = bytes(s).length;
+        return len > 0 && len <= MAX_STRING_LENGTH;
+    }
+
     function _validateStrings(string calldata bookingId, string calldata productVariantId, string calldata refId)
         internal
         pure
     {
-        require(bytes(bookingId).length > 0 && bytes(bookingId).length <= MAX_STRING_LENGTH, "Invalid bookingId length");
-        require(
-            bytes(productVariantId).length > 0 && bytes(productVariantId).length <= MAX_STRING_LENGTH,
-            "Invalid productVariantId length"
-        );
-        require(bytes(refId).length > 0 && bytes(refId).length <= MAX_STRING_LENGTH, "Invalid refId length");
+        require(_isValidString(bookingId), "Invalid bookingId length");
+        require(_isValidString(productVariantId), "Invalid productVariantId length");
+        require(_isValidString(refId), "Invalid refId length");
     }
 }

@@ -1,66 +1,124 @@
-## Foundry
+# TakumiPay — EVM (Foundry)
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Solidity implementation of the merchant-payment contract that also exists on
+[Stellar](../stellar) and [Solana](../solana/programs/takumi_pay). Owner/admin roles,
+pausing, backend-signed merchant payment quotes with replay protection, a platform-fee
+treasury, per-token spending limits, generic booking transactions, point deposits, and
+timelocked withdrawals.
 
-Foundry consists of:
+Deployed behind a UUPS (ERC-1967) proxy.
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Why this isn't a line-for-line port
 
-## Documentation
+- **Native and ERC-20 need separate code paths.** On Stellar, XLM is itself a token
+  contract (SEP-41), so every entrypoint takes a single address. Here `address(0)`
+  means native (ETH, MATIC, …) and each value-in entrypoint branches on it. Native is
+  still gated by the same allowlist as any ERC-20 — there is no implicit bypass, so
+  `addAllowedPaymentToken(address(0))` is a required post-deploy step if you accept it.
+- **Quotes are verified with EIP-712 + `ecrecover`**, not `ed25519_verify` (Stellar) or
+  an auxiliary instruction check (Solana). The EIP-712 domain separator binds a
+  signature to this chain and this deployment, the same role Stellar's
+  `QuoteMessage { network_id, contract, quote }` wrapper plays.
+- **`refId` replay keys are `keccak256` of the string**, computed on-chain.
+- **Fee-on-transfer tokens are rejected**, not accommodated: every ERC-20 pull asserts
+  the received balance delta equals the requested amount (`_pullToken`). Stellar has no
+  equivalent because SEP-41 transfers cannot skim.
 
-https://book.getfoundry.sh/
+## Layout
 
-## Usage
-
-### Build
-
-```shell
-$ forge build
+```
+src/TakumiPay.sol          the contract — single flat implementation
+script/DeployTakumiPay.s.sol
+                           DeployTakumiPay (fresh proxy) + UpgradeTakumiPay (new impl)
+test/TakumiPayProduction.t.sol    pause, spending limits, batching, allowlist, withdrawals, upgrades
+test/TakumiPayMerchant.t.sol      processMerchantPayment, quote validation, treasury sweeps, signer rotation
+test/TakumiPayPointDeposit.t.sol  depositPoints and the payment-token allowlist
+deployments/<chainId>.json        deployment record, written by the deploy script
 ```
 
-### Test
+## Payment token allowlist
 
-```shell
-$ forge test
+A single `allowedPaymentTokens` list gates **every** entrypoint that moves value in:
+
+| Entrypoint | Gated |
+|---|---|
+| `createTransaction` | ✅ |
+| `createTransactionBatch` | ✅ (phase 1, before any transfer) |
+| `processMerchantPayment` | ✅ |
+| `depositPoints` | ✅ |
+
+This mirrors Stellar's `AllowedPaymentToken`. A freshly deployed contract accepts
+**nothing** until the owner allowlists tokens:
+
+```sh
+cast send $PROXY "addAllowedPaymentToken(address)" $USDC --rpc-url $RPC_URL --private-key $PK
+cast send $PROXY "addAllowedPaymentToken(address)" 0x0000000000000000000000000000000000000000 ...  # native
 ```
 
-### Format
+## Treasury sweep rate limit
 
-```shell
-$ forge fmt
+`sweepMerchantBacking` / `sweepPlatformFees` deliberately skip the withdrawal
+timelock — merchant float has to settle daily and a 7-day queue would break that.
+A per-token rolling 24h cap bounds the damage instead:
+
+```sh
+# Sweeps fail closed. A fresh deploy can sweep nothing until this is set.
+cast send $PROXY "queueSweepCap(address,uint256)" $USDC 50000000000 ...
+cast send $PROXY "applySweepCap(address)" $USDC ...
 ```
 
-### Gas Snapshots
+**Loosening a control is never a single call.** Raising a sweep cap, or lowering
+`withdrawalDelay`, must be queued and is itself subject to the delay currently in
+force. Tightening (lowering a cap, raising the delay) is immediate. Without this,
+the timelock would be decorative — an owner key that leaked could call
+`setWithdrawalDelay(0)` and `withdraw()` in the same transaction.
 
-```shell
-$ forge snapshot
+| Action | Path |
+|---|---|
+| Raise `withdrawalDelay` | `setWithdrawalDelay` — immediate |
+| Lower `withdrawalDelay` | `queueWithdrawalDelay` → wait → `applyWithdrawalDelay` |
+| Lower `sweepCap` | `setSweepCap` — immediate |
+| Raise `sweepCap` | `queueSweepCap` → wait → `applySweepCap` |
+
+> **Known limit.** With a single-EOA owner these controls bound the blast radius
+> of a leaked key; they do not eliminate it. `upgradeToAndCall` is still owner-only
+> and instant, so an attacker holding the owner key can upgrade to a malicious
+> implementation and bypass everything. Closing that needs either a timelocked
+> upgrade path or a multisig owner.
+
+## Build
+
+```sh
+forge build
 ```
 
-### Anvil
+## Test
 
-```shell
-$ anvil
+```sh
+forge test
+forge test --match-path test/TakumiPayMerchant.t.sol -vvv
 ```
 
-### Deploy
+## Deploy
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+```sh
+export RPC_URL=...
+export BACKEND_SIGNER=0x...        # address that signs EIP-712 quotes
+export INITIAL_OWNER=0x...         # optional; defaults to the deployer
+
+forge script script/DeployTakumiPay.s.sol:DeployTakumiPay \
+  --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast --verify
 ```
 
-### Cast
+`initialize(owner, backendSigner)` runs atomically with the proxy deployment, so there
+is no window in which an uninitialized proxy is live.
 
-```shell
-$ cast <subcommand>
+## Upgrade
+
+```sh
+PROXY_ADDRESS=0x... forge script script/DeployTakumiPay.s.sol:UpgradeTakumiPay \
+  --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast --verify
 ```
 
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+Storage layout must never be reordered — append only, and decrement `__gap` when adding
+state. Verify with `forge inspect TakumiPay storageLayout` before every upgrade.

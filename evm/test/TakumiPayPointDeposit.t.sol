@@ -15,7 +15,7 @@ contract MockERC20 is ERC20 {
 }
 
 contract TakumiPayPointDepositTest is Test {
-    TakumiWallet public wallet;
+    TakumiPay public wallet;
     MockERC20 public usdc;
     MockERC20 public usdt;
 
@@ -30,18 +30,18 @@ contract TakumiPayPointDepositTest is Test {
         user1 = makeAddr("user1");
         user2 = makeAddr("user2");
 
-        TakumiWallet implementation = new TakumiWallet();
+        TakumiPay implementation = new TakumiPay();
         ERC1967Proxy proxy = new ERC1967Proxy(
             address(implementation),
-            abi.encodeCall(TakumiWallet.initialize, (owner))
+            abi.encodeCall(TakumiPay.initialize, (owner, makeAddr("backendSigner")))
         );
-        wallet = TakumiWallet(payable(address(proxy)));
+        wallet = TakumiPay(payable(address(proxy)));
 
         usdc = new MockERC20("USD Coin", "USDC");
         usdt = new MockERC20("Tether USD", "USDT");
 
         wallet.addAdmin(admin);
-        wallet.addAllowedPointToken(address(usdc));
+        wallet.addAllowedPaymentToken(address(usdc));
 
         usdc.mint(user1, 1000e6);
         usdc.mint(user2, 1000e6);
@@ -75,7 +75,7 @@ contract TakumiPayPointDepositTest is Test {
         vm.stopPrank();
 
         vm.prank(admin);
-        TakumiWallet.PointDeposit memory dep = wallet.getPointDepositByRef(refId);
+        TakumiPay.PointDeposit memory dep = wallet.getPointDepositByRef(refId);
 
         assertEq(dep.walletAddress, user1);
         assertEq(dep.tokenAddress, address(usdc));
@@ -114,7 +114,7 @@ contract TakumiPayPointDepositTest is Test {
         usdc.approve(address(wallet), amount);
 
         vm.expectEmit(true, true, true, true);
-        emit TakumiWallet.PointDepositCreated(
+        emit TakumiPay.PointDepositCreated(
             1,
             user1,
             address(usdc),
@@ -129,7 +129,7 @@ contract TakumiPayPointDepositTest is Test {
     function test_DepositPoints_RevertIf_TokenNotAllowed() public {
         vm.startPrank(user1);
         usdt.approve(address(wallet), 100e6);
-        vm.expectRevert("Token not allowed for point deposits");
+        vm.expectRevert(TakumiPay.TokenNotAllowed.selector);
         wallet.depositPoints(address(usdt), "pt_usdt1", 100e6);
         vm.stopPrank();
     }
@@ -159,7 +159,7 @@ contract TakumiPayPointDepositTest is Test {
 
         vm.startPrank(user1);
         usdc.approve(address(wallet), 100e6);
-        vm.expectRevert(TakumiWallet.PointDepositsPaused.selector);
+        vm.expectRevert(TakumiPay.PointDepositsPaused.selector);
         wallet.depositPoints(address(usdc), "pt_paused", 100e6);
         vm.stopPrank();
     }
@@ -182,7 +182,7 @@ contract TakumiPayPointDepositTest is Test {
         vm.stopPrank();
 
         vm.prank(admin);
-        TakumiWallet.PointDeposit memory dep = wallet.getPointDepositByRef(refId);
+        TakumiPay.PointDeposit memory dep = wallet.getPointDepositByRef(refId);
         assertEq(dep.amount, amount);
         assertEq(dep.walletAddress, user1);
     }
@@ -204,16 +204,16 @@ contract TakumiPayPointDepositTest is Test {
 
         vm.startPrank(admin);
 
-        TakumiWallet.PointDeposit[] memory page1 = wallet.getPointDepositsByAddress(user1, 0, 2);
+        TakumiPay.PointDeposit[] memory page1 = wallet.getPointDepositsByAddress(user1, 0, 2);
         assertEq(page1.length, 2);
         assertEq(page1[0].refId, "pt_p1");
         assertEq(page1[1].refId, "pt_p2");
 
-        TakumiWallet.PointDeposit[] memory page2 = wallet.getPointDepositsByAddress(user1, 2, 2);
+        TakumiPay.PointDeposit[] memory page2 = wallet.getPointDepositsByAddress(user1, 2, 2);
         assertEq(page2.length, 1);
         assertEq(page2[0].refId, "pt_p3");
 
-        TakumiWallet.PointDeposit[] memory empty = wallet.getPointDepositsByAddress(user1, 10, 2);
+        TakumiPay.PointDeposit[] memory empty = wallet.getPointDepositsByAddress(user1, 10, 2);
         assertEq(empty.length, 0);
 
         vm.stopPrank();
@@ -234,7 +234,7 @@ contract TakumiPayPointDepositTest is Test {
         vm.stopPrank();
 
         vm.prank(user1);
-        TakumiWallet.PointDeposit[] memory result = wallet.getUserPointDeposits(0, 10);
+        TakumiPay.PointDeposit[] memory result = wallet.getUserPointDeposits(0, 10);
         assertEq(result.length, 2);
         assertEq(result[0].walletAddress, user1);
         assertEq(result[1].walletAddress, user1);
@@ -256,61 +256,63 @@ contract TakumiPayPointDepositTest is Test {
 
     // ====== Token Whitelist Management ======
 
-    function test_AddAllowedPointToken_Success() public {
-        wallet.addAllowedPointToken(address(usdt));
-        assertTrue(wallet.allowedPointTokens(address(usdt)));
+    function test_AddAllowedPaymentToken_Success() public {
+        wallet.addAllowedPaymentToken(address(usdt));
+        assertTrue(wallet.allowedPaymentTokens(address(usdt)));
     }
 
-    function test_AddAllowedPointToken_EmitsEvent() public {
+    function test_AddAllowedPaymentToken_EmitsEvent() public {
         vm.expectEmit(true, false, false, false);
-        emit TakumiWallet.PointTokenAdded(address(usdt));
-        wallet.addAllowedPointToken(address(usdt));
+        emit TakumiPay.AllowedPaymentTokenAdded(address(usdt));
+        wallet.addAllowedPaymentToken(address(usdt));
     }
 
-    function test_AddAllowedPointToken_RevertIf_NotOwner() public {
+    function test_AddAllowedPaymentToken_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert(TakumiWallet.NotOwner.selector);
-        wallet.addAllowedPointToken(address(usdt));
+        vm.expectRevert(TakumiPay.NotOwner.selector);
+        wallet.addAllowedPaymentToken(address(usdt));
     }
 
-    function test_AddAllowedPointToken_RevertIf_AlreadyAllowed() public {
+    function test_AddAllowedPaymentToken_RevertIf_AlreadyAllowed() public {
         vm.expectRevert("Token already allowed");
-        wallet.addAllowedPointToken(address(usdc));
+        wallet.addAllowedPaymentToken(address(usdc));
     }
 
-    function test_AddAllowedPointToken_RevertIf_ZeroAddress() public {
-        vm.expectRevert(TakumiWallet.ZeroAddress.selector);
-        wallet.addAllowedPointToken(address(0));
+    /// address(0) is native, and native is gated by the same allowlist as any
+    /// ERC-20 — so allowlisting it is valid, not an error.
+    function test_AddAllowedPaymentToken_AcceptsNative() public {
+        wallet.addAllowedPaymentToken(address(0));
+        assertTrue(wallet.isAllowedPaymentToken(address(0)));
     }
 
-    function test_RemoveAllowedPointToken_Success() public {
-        wallet.removeAllowedPointToken(address(usdc));
-        assertFalse(wallet.allowedPointTokens(address(usdc)));
+    function test_RemoveAllowedPaymentToken_Success() public {
+        wallet.removeAllowedPaymentToken(address(usdc));
+        assertFalse(wallet.allowedPaymentTokens(address(usdc)));
     }
 
-    function test_RemoveAllowedPointToken_EmitsEvent() public {
+    function test_RemoveAllowedPaymentToken_EmitsEvent() public {
         vm.expectEmit(true, false, false, false);
-        emit TakumiWallet.PointTokenRemoved(address(usdc));
-        wallet.removeAllowedPointToken(address(usdc));
+        emit TakumiPay.AllowedPaymentTokenRemoved(address(usdc));
+        wallet.removeAllowedPaymentToken(address(usdc));
     }
 
-    function test_RemoveAllowedPointToken_RevertIf_NotOwner() public {
+    function test_RemoveAllowedPaymentToken_RevertIf_NotOwner() public {
         vm.prank(user1);
-        vm.expectRevert(TakumiWallet.NotOwner.selector);
-        wallet.removeAllowedPointToken(address(usdc));
+        vm.expectRevert(TakumiPay.NotOwner.selector);
+        wallet.removeAllowedPaymentToken(address(usdc));
     }
 
-    function test_GetAllowedPointTokens() public {
-        wallet.addAllowedPointToken(address(usdt));
-        address[] memory tokens = wallet.getAllowedPointTokens();
+    function test_GetAllowedPaymentTokens() public {
+        wallet.addAllowedPaymentToken(address(usdt));
+        address[] memory tokens = wallet.getAllowedPaymentTokens();
         assertEq(tokens.length, 2);
         assertEq(tokens[0], address(usdc));
         assertEq(tokens[1], address(usdt));
     }
 
-    function test_IsAllowedPointToken() public {
-        assertTrue(wallet.isAllowedPointToken(address(usdc)));
-        assertFalse(wallet.isAllowedPointToken(address(usdt)));
+    function test_IsAllowedPaymentToken() public {
+        assertTrue(wallet.isAllowedPaymentToken(address(usdc)));
+        assertFalse(wallet.isAllowedPaymentToken(address(usdt)));
     }
 
     // ====== Pause Control ======
@@ -325,13 +327,13 @@ contract TakumiPayPointDepositTest is Test {
 
     function test_SetPointDepositsPaused_EmitsEvent() public {
         vm.expectEmit(false, false, false, true);
-        emit TakumiWallet.PointDepositsPausedToggled(true);
+        emit TakumiPay.PointDepositsPausedToggled(true);
         wallet.setPointDepositsPaused(true);
     }
 
-    function test_SetPointDepositsPaused_RevertIf_NotOwner() public {
+    function test_SetPointDepositsPaused_RevertIf_NotAdminOrOwner() public {
         vm.prank(user1);
-        vm.expectRevert(TakumiWallet.NotOwner.selector);
+        vm.expectRevert(TakumiPay.NotAdminOrOwner.selector);
         wallet.setPointDepositsPaused(true);
     }
 
@@ -353,7 +355,7 @@ contract TakumiPayPointDepositTest is Test {
         vm.stopPrank();
 
         vm.prank(admin);
-        TakumiWallet.Transaction memory txData = wallet.getTransactionByRef("tx_ref2");
+        TakumiPay.Transaction memory txData = wallet.getTransactionByRef("tx_ref2");
         assertEq(txData.bookingId, "booking2");
     }
 
