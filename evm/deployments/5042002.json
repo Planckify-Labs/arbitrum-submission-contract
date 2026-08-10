@@ -1,0 +1,56 @@
+{
+  "network": "arc-testnet",
+  "chainId": 5042002,
+  "version": "2.1.0",
+  "proxy": "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+  "implementation": "0xbB074ED383dA5C99756D72b62f7Fdff97A8c9022",
+  "owner": "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6",
+  "backendSigner": "0x299E4E56e9F05A21414A62479DA1514C20aA61e8",
+  "deployedAt": 1786355310,
+  "explorer": "https://testnet.arcscan.app/address/0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+  "verified": true,
+  "compiler": { "solc": "0.8.30", "evmVersion": "cancun", "optimizerRuns": 200, "viaIR": true },
+
+  "arcNotes": {
+    "nativeIsAliased": "On Arc the native coin and the USDC ERC-20 at 0x3600...0000 are two views of ONE balance (18 vs 6 decimals). setNativeAliasToken was therefore called with that ERC-20, which closes the native path everywhere: address(0) can no longer be allowlisted for payments, nor withdrawn/swept/recovered. All value moves through the 6-decimal ERC-20 view, keeping amounts identical to every other chain (Solana/Stellar/Arbitrum) so the backend and mobile app need no Arc-specific handling.",
+    "aliasingVerifiedOnChain": "After the smoke test the proxy held balanceOf=2000000 (6d) and address(this).balance=2000000000000000000 (18d) simultaneously — 2e18/1e12 == 2e6, the same money seen twice.",
+    "gasIsUsdc": "Gas is paid in native USDC from the sender's own balance, which is the same pot as their payment balance. Clients must leave headroom for gas rather than offering a MAX-out-the-balance payment.",
+    "forkTestingUnavailable": "`forge test --fork-url` cannot exercise Arc's USDC: transfers revert with empty returndata because the precompile backing 0x3600...0000 does not exist in revm. Reads (balanceOf) work, writes do not. Integration testing must run live against testnet."
+  },
+
+  "postDeployConfig": [
+    { "step": 1, "call": "setNativeAliasToken(0x3600000000000000000000000000000000000000)", "tx": "0xd053a205c352b761e997e44ade64d4699d91f6a489047baebe935deae5ae2bdc" },
+    { "step": 2, "call": "addAllowedPaymentToken(0x3600000000000000000000000000000000000000)", "tx": "0x2195a4d7c45a08de91da325614e7bf9a70ea16881e06c7dc3e5d90b558bbaf73" },
+    { "step": 3, "call": "queueSweepCap(USDC, 1000000000)", "tx": "0xaff9be5fbe72448d165388d782ed4267ae755bc1f7d380a896b64d6c7fd38b9c" },
+    { "step": 4, "call": "applySweepCap(USDC)", "tx": "0x70b36a97e0299a6d010d65e044f6646b2c68ffd02839200a2a593c2aea72908e" }
+  ],
+
+  "state": {
+    "allowedPaymentTokens": ["0x3600000000000000000000000000000000000000"],
+    "nativeAliasToken": "0x3600000000000000000000000000000000000000",
+    "sweepCap": { "0x3600000000000000000000000000000000000000": "1000000000", "native": "0" },
+    "withdrawalDelay": 0
+  },
+
+  "verifiedEndToEnd": {
+    "note": "Every entrypoint exercised live against Arc testnet with real USDC, not a mock.",
+    "createTransaction": { "refId": "arc-smoke-1786355446", "amount": "1000000", "txId": 1 },
+    "depositPoints": { "refId": "pt-arc-smoke-1786355446", "amount": "1000000", "depositId": 1 },
+    "processMerchantPayment": {
+      "refId": "arc-merchant-1786355493",
+      "merchantId": "merchant-arc-1",
+      "amount": "1000000",
+      "platformFeeAmount": "100000",
+      "note": "EIP-712 quote signed with the API's real EVM_QUOTE_SIGNER_PRIVATE_KEY and verified on-chain against backendSigner. Domain separator 0x51a1bf32df37d3acacfe1441787baef16c83dace0f9c8ab267b17af3c4b6f3dd (chainId 5042002)."
+    },
+    "sweepPlatformFees": { "amount": "100000" },
+    "sweepMerchantBacking": { "amount": "1000000" },
+    "nativePathRejected": "withdraw / recoverToken / queueWithdrawal with address(0) all revert NativeDisabledOnAliasChain (0x9016e99f); addAllowedPaymentToken(address(0)) likewise. sweepMerchantBacking hits its InsufficientBalance precheck first but is guarded the same way."
+  },
+
+  "todo": {
+    "ownership": "Owner is still the deployer. transferOwnership(0x0b43A81e348D1163B88AD779ce97274f798cc04F) then acceptOwnership() from that address once it holds USDC for gas on Arc.",
+    "withdrawalDelay": "Left at 0 so the instant withdraw/recoverToken paths stay testable. MAINNET MUST set a non-zero delay, and must do so AFTER sweep caps are configured.",
+    "backendSigner": "0x299E4E56... derives from a private key committed in api/.env.example, so it is public. Rotate via rotateBackendSigner() before any deployment holding real value."
+  }
+}
