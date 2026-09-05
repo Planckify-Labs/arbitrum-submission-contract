@@ -1,0 +1,39 @@
+{
+  "network": "base-sepolia",
+  "chainId": 84532,
+  "version": "2.1.0",
+  "proxy": "0x999887c7365E6a344600Ea8Ba360ff7Df581aCF5",
+  "implementation": "0x8D8ee588a741a00A7ABE27999382eD9B9a2BeA7a",
+  "owner": "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6",
+  "backendSigner": "0x299E4E56e9F05A21414A62479DA1514C20aA61e8",
+  "deployedAt": 1788586264,
+  "explorer": "https://sepolia.basescan.org/address/0x999887c7365E6a344600Ea8Ba360ff7Df581aCF5",
+  "verified": false,
+  "compiler": { "solc": "0.8.30", "evmVersion": "cancun", "optimizerRuns": 200, "viaIR": true },
+
+  "usdc": {
+    "note": "Circle's official Base Sepolia testnet USDC, confirmed on-chain (symbol/decimals read via cast, not assumed).",
+    "address": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+    "decimals": 6
+  },
+
+  "postDeployConfig": [
+    { "step": 1, "call": "addAllowedPaymentToken(0x036CbD53842c5426634e7929541eC2318f3dCF7e)", "tx": "0x73e40c429dfe277c839a6560d0efeeeef804f6856fc63481dc10e56b73f931fa" },
+    { "step": 2, "call": "queueSweepCap(USDC, 1000000000)", "tx": "0x10eb49b638e88ae5bdc71f00b61fa4e1f82cbe522a0dfdab74c79c3f14ebaf78" },
+    { "step": 3, "call": "applySweepCap(USDC)", "tx": "0x364f7bd810d5eb083a3084700eed54e3146d8287f0ef8fee5e92ae96dbdb32c2" }
+  ],
+
+  "state": {
+    "allowedPaymentTokens": ["0x036CbD53842c5426634e7929541eC2318f3dCF7e"],
+    "nativeAliasToken": "0x0000000000000000000000000000000000000000",
+    "sweepCap": { "0x036CbD53842c5426634e7929541eC2318f3dCF7e": "1000000000", "native": "0" },
+    "withdrawalDelay": 0
+  },
+
+  "todo": {
+    "ownership": "Owner is still the deployer (0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6), left that way so the same key that deployed could also run addAllowedPaymentToken/queueSweepCap/applySweepCap. Unlike the Arbitrum One mainnet deployment, this proxy was deliberately NOT handed to the 0x0b43A81e... multisig — doing so before allowlisting a payment token and setting a sweep cap would have locked this testnet contract out of any owner-only configuration (nobody here holds that multisig's key).",
+    "verification": "Not verified on Basescan — ETHERSCAN_API_KEY in evm/.env is blank. Run `forge verify-contract --chain 84532 <implementation> src/TakumiPay.sol:TakumiPay` once a Basescan (Etherscan v2 unified) key is available.",
+    "nativeToken": "Base Sepolia ETH is a normal separate asset (unlike Arc's USDC-is-gas aliasing), so address(0) was left un-allowlisted — only USDC is enabled for payments. Add native ETH via addAllowedPaymentToken(address(0)) + its own sweep cap if native payments are wanted.",
+    "withdrawalDelay": "Left at 0 for continued testnet configurability. Raise via queueWithdrawalDelay/applyWithdrawalDelay before this contract is trusted with anything beyond test funds."
+  }
+}

@@ -19,10 +19,12 @@ remappings = [
 [rpc_endpoints]
 arbitrum = "${RPC_URL}"
 arc_testnet = "https://rpc.testnet.arc.network"
+base_sepolia = "https://sepolia.base.org"
 
 [etherscan]
 arbitrum = { key = "${ETHERSCAN_API_KEY}", chain = 42161 }
 # arcscan is a Blockscout instance, not Etherscan — it ignores the API key.
 arc_testnet = { key = "unused", chain = 5042002, url = "https://testnet.arcscan.app/api" }
+base_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 84532 }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
