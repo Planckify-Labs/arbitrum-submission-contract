@@ -1,0 +1,48 @@
+{
+  "network": "arbitrum-sepolia",
+  "chainId": 421614,
+  "version": "2.1.0",
+  "proxy": "0x2469Bd87e809772f491af0E7847fbf7B62c388ae",
+  "implementation": "0xf8A245B2192d3bc51218A783b04c8714c6b5c828",
+  "owner": "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6",
+  "backendSigner": "0x299E4E56e9F05A21414A62479DA1514C20aA61e8",
+  "deployedAt": 1788851076,
+  "explorer": "https://sepolia.arbiscan.io/address/0x2469Bd87e809772f491af0E7847fbf7B62c388ae",
+  "verified": false,
+  "compiler": { "solc": "0.8.30", "evmVersion": "cancun", "optimizerRuns": 200, "viaIR": true },
+
+  "usdc": {
+    "note": "Circle's official Arbitrum Sepolia testnet USDC, confirmed on-chain (symbol/decimals/name read via cast, not assumed).",
+    "address": "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d",
+    "decimals": 6
+  },
+
+  "postDeployConfig": [
+    { "step": 1, "call": "addAllowedPaymentToken(0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d)", "tx": "0xf74ea5f85ab7f2f1b4138ef1c8c9398aced42bc16611125624e83073a0627ecd" },
+    { "step": 2, "call": "queueSweepCap(USDC, 1000000000)", "tx": "0xdb68f6659830ee0d4583dcc362245f54ad6e993ee89adbd5e58c31f975bc1d10" },
+    { "step": 3, "call": "applySweepCap(USDC)", "tx": "0xbd5884e9cd2c718a7a382b9c1acfc0424c54e820ea849aa7a266b493ba1f797f" }
+  ],
+
+  "state": {
+    "allowedPaymentTokens": ["0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"],
+    "nativeAliasToken": "0x0000000000000000000000000000000000000000",
+    "sweepCap": { "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d": "1000000000", "native": "0" },
+    "withdrawalDelay": 0
+  },
+
+  "verifiedEndToEnd": {
+    "note": "createTransaction and depositPoints exercised live on Arbitrum Sepolia with real testnet USDC (not a mock).",
+    "createTransaction": { "refId": "arb-sepolia-smoke-1788852219", "txId": 1, "amount": "1000000", "tx": "0x65830bfaae43d017795b6d3c569827cfd2bf407be3de576d6a6574121db39a50" },
+    "depositPoints": { "refId": "pt-arb-sepolia-smoke-1788852219", "depositId": 1, "amount": "1000000", "tx": "0xd3f21f7e8fecd4ae61a5f3b58e28a50b6bf47dfefdef23309c131a2ccbc30e54" },
+    "readback": "Both records read back via getTransactionByRef/getPointDepositByRef and match exactly; proxy's USDC balance is 2000000 (1+1), confirming both _pullToken calls succeeded with no fee-on-transfer mismatch.",
+    "processMerchantPayment": "Not exercised — would need an EIP-712 quote signed by the testnet backendSigner's private key, which this session doesn't hold (it's the known-public 0x299E4E56... key from api/.env.example, same as Base Sepolia/Arc testnet)."
+  },
+
+  "todo": {
+    "ownership": "Owner is still the deployer (0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6), left that way so the same key that deployed could also run addAllowedPaymentToken/queueSweepCap/applySweepCap, same pattern as Base Sepolia and Arc testnet. Not handed to the 0x0b43A81e... multisig on this testnet deployment.",
+    "verification": "Not verified on Arbiscan — ETHERSCAN_API_KEY in evm/.env is blank. Run `forge verify-contract --chain 421614 <implementation> src/TakumiPay.sol:TakumiPay` once an Arbiscan (Etherscan v2 unified) key is available.",
+    "nativeToken": "Arbitrum Sepolia ETH is a normal separate asset (unlike Arc's USDC-is-gas aliasing), so address(0) was left un-allowlisted — only USDC is enabled for payments.",
+    "withdrawalDelay": "Left at 0 for continued testnet configurability. Raise via queueWithdrawalDelay/applyWithdrawalDelay before this contract is trusted with anything beyond test funds.",
+    "rpc": "Deployed via the public Arbitrum Sepolia RPC (https://sepolia-rollup.arbitrum.io/rpc), added to foundry.toml as the `arbitrum_sepolia` endpoint — the project's own RPC_URL in evm/.env is Arbitrum One only."
+  }
+}
