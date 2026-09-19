@@ -1,0 +1,48 @@
+{
+  "network": "monad-testnet",
+  "chainId": 10143,
+  "version": "2.1.0",
+  "proxy": "0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+  "implementation": "0xbB074ED383dA5C99756D72b62f7Fdff97A8c9022",
+  "owner": "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6",
+  "backendSigner": "0x299E4E56e9F05A21414A62479DA1514C20aA61e8",
+  "deployedAt": 1789558137,
+  "explorer": "https://testnet.monadvision.com/address/0x9EEC5aD4FC092fD468A8114007e541238F4Ba5ee",
+  "verified": false,
+  "compiler": { "solc": "0.8.30", "evmVersion": "cancun", "optimizerRuns": 200, "viaIR": true },
+  "deployTxs": {
+    "implementation": "0x76b3f2c44af2fd9ba31cb9d81eb2f79eb316d2effbc5e2d04649c718c3234e0e",
+    "proxy": "0x6eed45f5b5bac2652706f8f7bd765887dd278d8df0a54edd1476f8578b4386d6"
+  },
+
+  "purpose": "Monad Metropolis 2026 hackathon — QRIS merchant-spend leg (mobile-app/docs/monad-metropolis-2026-spec.md §6.6). Proves `processMerchantPayment` settling a registered ERC-20 on Monad. The remittance leg uses the REAL Agora AUSD on Monad mainnet (143); this testnet deployment deliberately does not, see `ausd.note`.",
+
+  "ausd": {
+    "note": "MockAUSD — our own open-mint 6-decimal stand-in (src/MockAUSD.sol), NOT Agora's testnet AUSD (0xa9012a055bd4e0eDfF8Ce09f960291C09D5322dC), whose mint is permissioned with no faucet (verified on-chain 2026-09-16). decimals()/symbol()/name() read back via cast after deploy: 6 / AUSD / AUSD. 1,000,000 AUSD minted to the deployer at deploy time; anyone can mint more.",
+    "address": "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+    "decimals": 6,
+    "deployTx": "0xdca51260a5709ccbadbd39f86dbd2e7ef6046647d9ff2e3a64882dacf1f4aa01",
+    "initialMintTx": "0x2f1fc4a16acd3deca75e40f3695421799a46bb807d2b52fa028398f434726605"
+  },
+
+  "postDeployConfig": [
+    { "step": 1, "call": "addAllowedPaymentToken(0x1aC593085Fa34c651E805085da4b2cabAC676F99)", "tx": "not captured (deployer nonce 4); state verified via allowedPaymentTokens(AUSD) == true" },
+    { "step": 2, "call": "queueSweepCap(AUSD, 1000000000)", "tx": "not captured (deployer nonce 5)" },
+    { "step": 3, "call": "applySweepCap(AUSD)", "tx": "not captured (deployer nonce 6); state verified via sweepCap(AUSD) == 1000000000" }
+  ],
+
+  "state": {
+    "allowedPaymentTokens": ["0x1aC593085Fa34c651E805085da4b2cabAC676F99"],
+    "nativeAliasToken": "0x0000000000000000000000000000000000000000",
+    "sweepCap": { "0x1aC593085Fa34c651E805085da4b2cabAC676F99": "1000000000", "native": "0" },
+    "withdrawalDelay": 0
+  },
+
+  "todo": {
+    "ownership": "Owner is the deployer, same posture as Base Sepolia / Arc testnet: keeps owner-only configuration reachable on a testnet contract.",
+    "verification": "Not verified. `forge script --verify` against testnet.monadvision.com/api was answered by a Cloudflare challenge page during deploy; retry `forge verify-contract --chain 10143 --verifier blockscout --verifier-url https://testnet.monadvision.com/api <implementation> src/TakumiPay.sol:TakumiPay` from a browser-verified session or use the explorer UI.",
+    "addressCollision": "Proxy and implementation addresses are identical to the Arc testnet deployment (5042002.json) because the same deployer key started from nonce 0 on both chains — a genuine CREATE match, not a copy-paste. The two are independent contracts.",
+    "nativeToken": "Native MON left un-allowlisted; only MockAUSD is enabled for payments.",
+    "withdrawalDelay": "Left at 0 for continued testnet configurability."
+  }
+}

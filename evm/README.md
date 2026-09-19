@@ -28,8 +28,11 @@ Deployed behind a UUPS (ERC-1967) proxy.
 
 ```
 src/TakumiPay.sol          the contract — single flat implementation
+src/MockAUSD.sol           TESTNET-ONLY open-mint 6-decimal AUSD stand-in (Monad testnet QRIS demo)
 script/DeployTakumiPay.s.sol
                            DeployTakumiPay (fresh proxy) + UpgradeTakumiPay (new impl)
+script/DeployMockAUSD.s.sol
+                           deploys MockAUSD + initial mint; refuses any chain but 10143
 test/TakumiPayProduction.t.sol    pause, spending limits, batching, allowlist, withdrawals, upgrades
 test/TakumiPayMerchant.t.sol      processMerchantPayment, quote validation, treasury sweeps, signer rotation
 test/TakumiPayPointDeposit.t.sol  depositPoints and the payment-token allowlist
