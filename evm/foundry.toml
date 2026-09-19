@@ -21,6 +21,7 @@ arbitrum = "${RPC_URL}"
 arbitrum_sepolia = "https://sepolia-rollup.arbitrum.io/rpc"
 arc_testnet = "https://rpc.testnet.arc.network"
 base_sepolia = "https://sepolia.base.org"
+monad = "https://rpc.monad.xyz"
 monad_testnet = "https://testnet-rpc.monad.xyz"
 
 [etherscan]
@@ -30,6 +31,7 @@ arbitrum_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 421614 }
 arc_testnet = { key = "unused", chain = 5042002, url = "https://testnet.arcscan.app/api" }
 base_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 84532 }
 # monadvision / socialscan is a Blockscout-compatible verifier; no key needed.
+monad = { key = "unused", chain = 143, url = "https://monadvision.com/api" }
 monad_testnet = { key = "unused", chain = 10143, url = "https://testnet.monadvision.com/api" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

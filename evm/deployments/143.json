@@ -1,0 +1,48 @@
+{
+  "network": "monad-mainnet",
+  "chainId": 143,
+  "version": "2.1.0",
+  "proxy": "0x479B0843C3e0627f36551660506dEd5b349Fa968",
+  "implementation": "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+  "owner": "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6",
+  "backendSigner": "0x299E4E56e9F05A21414A62479DA1514C20aA61e8",
+  "deployedAt": 1789785557,
+  "explorer": "https://monadvision.com/address/0x479B0843C3e0627f36551660506dEd5b349Fa968",
+  "verified": false,
+  "compiler": { "solc": "0.8.30", "evmVersion": "cancun", "optimizerRuns": 200, "viaIR": true },
+  "deployTxs": {
+    "implementation": "0x051d16f8b67b71945231f82550060a565496883a02f95404e5c4152b01f83525",
+    "proxy": "0x0c50d974055f91c9b093d45026d4ab214f7b0f67e30627976f8bc66f6128f8c7"
+  },
+
+  "purpose": "Monad Metropolis 2026 — the real cross-border AUSD leg (mobile-app/docs/monad-metropolis-2026-spec.md), enabling processMerchantPayment and depositPoints against the real Agora AUSD on Monad mainnet. Deployer/owner is the SAME address used for the Monad testnet deploy (deployments/10143.json); it was already funded with mainnet MON, so it doubles as the deployer here too.",
+
+  "ausd": {
+    "note": "The REAL Agora AUSD ERC-20 on Monad mainnet, not a mock. Address from Agora's contract-deployments doc; decimals()=6, symbol()=\"AUSD\", name()=\"AUSD\" verified on-chain 2026-09-14 (mobile-app/docs/monad-metropolis-2026-spec.md §2.1).",
+    "address": "0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a",
+    "decimals": 6
+  },
+
+  "postDeployConfig": [
+    { "step": 1, "call": "addAllowedPaymentToken(0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a)", "tx": "0x8d12ec7d42afd22e9f436a0832fb1814ea047f7e7cf9dbcdd7b6feafbc37d0a2" },
+    { "step": 2, "call": "queueSweepCap(AUSD, 1000000000)", "tx": "0x44d6b9e9c37b1d882f3902e2f2bcd10f0db70900826648f4a7fee8efba53aecd" },
+    { "step": 3, "call": "applySweepCap(AUSD)", "tx": "0x7841271ae092e045617fa6be6828822a887c3ce8acb0ef9ace7bdecfddf2ad8a" },
+    { "step": 4, "call": "setWithdrawalDelay(86400)", "tx": "0x39489a97176de821bd721efe7cfce2f2996b13cd6bc3941cd66ffc135613a3b5" }
+  ],
+
+  "state": {
+    "allowedPaymentTokens": ["0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a"],
+    "nativeAliasToken": "0x0000000000000000000000000000000000000000",
+    "sweepCap": { "0x00000000eFE302BEAA2b3e6e1b18d08D69a9012a": "1000000000", "native": "0" },
+    "withdrawalDelay": 86400,
+    "verifiedOnchain": "2026-09-19 via cast call: allowedPaymentTokens(AUSD)=true, sweepCap(AUSD)=1000000000, withdrawalDelay()=86400, owner()=0x0141781A...64DB6, backendSigner()=0x299E4E56...A61e8, version()=\"2.1.0\""
+  },
+
+  "todo": {
+    "ownership": "Single EOA owner (same posture as every prior deployment). README's own known-limit note applies: a leaked owner key can upgradeToAndCall to a malicious implementation instantly. Consider a multisig (Safe) owner before scaling volume.",
+    "verification": "Not verified. Same Cloudflare-challenge issue on monadvision.com/api hit during Monad testnet deploy; retry `forge verify-contract --chain 143 --verifier blockscout --verifier-url https://monadvision.com/api <implementation> src/TakumiPay.sol:TakumiPay` from a browser-verified session or use the explorer UI.",
+    "addressCollision": "Proxy (0x479B08...a968) and implementation (0x1aC593...C9022→0x1aC593085Fa34c651E805085da4b2cabAC676F99) match the earlier Arbitrum mainnet deployment (deployments/42161.json) and the MockAUSD/Base-Sepolia-era addresses respectively — same deployer key, same nonce sequence, a genuine CREATE match, not a copy-paste.",
+    "nativeToken": "Native MON left un-allowlisted; only AUSD is enabled for payments, matching the spec's AUSD-only remittance scope.",
+    "goLive": "API side wired on the remote DB 2026-09-19: SmartContract row `smart-contract-payment-monad-mainnet` (blockchainId `monad-mainnet`) + Token `ausd-monad-mainnet-token`.isPaymentEnabled = true. Those two rows are the only server-side gates for point deposits / merchant payments on this chain."
+  }
+}
