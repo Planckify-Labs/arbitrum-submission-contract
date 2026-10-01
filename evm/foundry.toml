@@ -19,6 +19,7 @@ remappings = [
 [rpc_endpoints]
 arbitrum = "${RPC_URL}"
 arbitrum_sepolia = "https://sepolia-rollup.arbitrum.io/rpc"
+arc = "https://rpc.mainnet.arc.io"
 arc_testnet = "https://rpc.testnet.arc.network"
 base_sepolia = "https://sepolia.base.org"
 monad = "https://rpc.monad.xyz"
@@ -28,6 +29,7 @@ monad_testnet = "https://testnet-rpc.monad.xyz"
 arbitrum = { key = "${ETHERSCAN_API_KEY}", chain = 42161 }
 arbitrum_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 421614 }
 # arcscan is a Blockscout instance, not Etherscan — it ignores the API key.
+arc = { key = "unused", chain = 5042, url = "https://explorer.arc.io/api" }
 arc_testnet = { key = "unused", chain = 5042002, url = "https://testnet.arcscan.app/api" }
 base_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 84532 }
 # monadvision / socialscan is a Blockscout-compatible verifier; no key needed.
