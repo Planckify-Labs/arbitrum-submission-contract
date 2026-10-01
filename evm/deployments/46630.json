@@ -1,0 +1,40 @@
+{
+  "network": "robinhood-testnet",
+  "chainId": 46630,
+  "version": "2.1.0",
+  "proxy": "0x479B0843C3e0627f36551660506dEd5b349Fa968",
+  "implementation": "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
+  "owner": "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6",
+  "backendSigner": "0x299E4E56e9F05A21414A62479DA1514C20aA61e8",
+  "deployedAt": 1790847275,
+  "explorer": "https://explorer.testnet.chain.robinhood.com/address/0x479B0843C3e0627f36551660506dEd5b349Fa968",
+  "verified": false,
+  "compiler": { "solc": "0.8.30", "evmVersion": "cancun", "optimizerRuns": 200, "viaIR": true },
+
+  "purpose": "Arbitrum Open House hackathon: Robinhood Chain (Arbitrum Orbit) testnet deployment with Paxos USDG. backendSigner rotated to the shared (publicly known) signer via rotateBackendSigner (tx 0xe06baeba53147ff52fa2d48988489bd73597029ee4ab712240d47dbb45d0d9b8).",
+
+  "usdg": {
+    "note": "Paxos USDG on Robinhood testnet (docs.paxos.com/guides/stablecoin/usdg/testnet); symbol USDG and decimals 6 read on-chain. No faucet found.",
+    "address": "0x7E955252E15c84f5768B83c41a71F9eba181802F",
+    "decimals": 6
+  },
+
+  "postDeployConfig": [
+    { "step": 1, "call": "addAllowedPaymentToken(USDG)", "tx": "0x3553e90e3a3179227348a7a62b472e9ed4aa8032460ecfdcd9cf452aa5ffc93d" },
+    { "step": 2, "call": "queueSweepCap(USDG, 1000000000)", "tx": "0xa3f220828c764b19473ab352ca0abeb5f246cd3f729d4e517fe56bf5bbf19148" },
+    { "step": 3, "call": "applySweepCap(USDG)", "tx": "0x13b560c9a896885302e855cdd1f3505adb3ce0ddadfeec517d991a6e049176ef" }
+  ],
+
+  "state": {
+    "allowedPaymentTokens": ["0x7E955252E15c84f5768B83c41a71F9eba181802F"],
+    "sweepCap": { "0x7E955252E15c84f5768B83c41a71F9eba181802F": "1000000000" },
+    "withdrawalDelay": 0
+  },
+
+  "verifiedEndToEnd": {
+    "note": "createTransaction and depositPoints exercised live on Robinhood testnet with real testnet USDG (1 USDG each); the proxy's USDG balance is 2000000 (1+1), so both _pullToken calls succeeded. processMerchantPayment also exercised with a real EIP-712 quote signed by backendSigner (0.5 USDG, fee 0.005).",
+    "createTransaction": { "refId": "robinhood-testnet-smoke-*", "amount": "1000000", "tx": "0xc6f89a2e65060a4aa81e74da88983e2d7f693836d4dd3b809f4b77858edc3cda" },
+    "depositPoints": { "amount": "1000000", "tx": "0x57f563bf3888cc450b440643383f14368ee4058409b3439aabf36ce1d1d6c71e" },
+    "processMerchantPayment": { "refId": "rh-merchant-1790850274", "amount": "500000", "platformFeeAmount": "5000", "tx": "0xab19a8f75dbabfe132e38d18b241de39f41ef067014fd440ca5e6fa232a82230" }
+  }
+}

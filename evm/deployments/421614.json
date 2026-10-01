@@ -17,20 +17,34 @@
     "decimals": 6
   },
 
+  "usdg": {
+    "note": "Paxos USDG on Arbitrum Sepolia (docs.paxos.com/guides/stablecoin/usdg/testnet); symbol/decimals read on-chain. Testnet token; no faucet found.",
+    "address": "0xFFC95faa3d63Cde504a05B567C600B78C0b41892",
+    "decimals": 6
+  },
+
   "postDeployConfig": [
     { "step": 1, "call": "addAllowedPaymentToken(0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d)", "tx": "0xf74ea5f85ab7f2f1b4138ef1c8c9398aced42bc16611125624e83073a0627ecd" },
     { "step": 2, "call": "queueSweepCap(USDC, 1000000000)", "tx": "0xdb68f6659830ee0d4583dcc362245f54ad6e993ee89adbd5e58c31f975bc1d10" },
-    { "step": 3, "call": "applySweepCap(USDC)", "tx": "0xbd5884e9cd2c718a7a382b9c1acfc0424c54e820ea849aa7a266b493ba1f797f" }
+    { "step": 3, "call": "applySweepCap(USDC)", "tx": "0xbd5884e9cd2c718a7a382b9c1acfc0424c54e820ea849aa7a266b493ba1f797f" },
+    { "step": 4, "call": "addAllowedPaymentToken(0xFFC95faa3d63Cde504a05B567C600B78C0b41892)", "tx": "0x70f47a30dc590efd6ed91f18680bf09c1f053d706b5e0c6131ce47c5fd2fd6a5" },
+    { "step": 5, "call": "queueSweepCap(USDG, 1000000000)", "tx": "0x58237afeb6311e9fd7b6b57bcf35aee2b55c55f9533cc5104ccac927fbb98e9a" },
+    { "step": 6, "call": "applySweepCap(USDG)", "tx": "0x6e18222f1ac55a8393787d67c4f8222e9ac4125cd37062888995576857618a77" }
   ],
 
   "state": {
-    "allowedPaymentTokens": ["0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d"],
+    "allowedPaymentTokens": ["0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d", "0xFFC95faa3d63Cde504a05B567C600B78C0b41892"],
     "nativeAliasToken": "0x0000000000000000000000000000000000000000",
-    "sweepCap": { "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d": "1000000000", "native": "0" },
+    "sweepCap": { "0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d": "1000000000", "0xFFC95faa3d63Cde504a05B567C600B78C0b41892": "1000000000", "native": "0" },
     "withdrawalDelay": 0
   },
 
   "verifiedEndToEnd": {
+    "usdg": {
+      "note": "Second round with Paxos testnet USDG (1 USDG each); proxy USDG balance 2000000 afterwards.",
+      "createTransaction": { "refId": "arb-sepolia-smoke-1790850202", "amount": "1000000", "tx": "0x3bb268dfa424ad7ce34823549c17e73871342331d53e26d16668d1f2be783b49" },
+      "depositPoints": { "amount": "1000000", "tx": "0xf777754baeb29b4d5b84226cfdc70fcd609cbc2a10e8296cb9f4e8d286dc2011" }
+    },
     "note": "createTransaction and depositPoints exercised live on Arbitrum Sepolia with real testnet USDC (not a mock).",
     "createTransaction": { "refId": "arb-sepolia-smoke-1788852219", "txId": 1, "amount": "1000000", "tx": "0x65830bfaae43d017795b6d3c569827cfd2bf407be3de576d6a6574121db39a50" },
     "depositPoints": { "refId": "pt-arb-sepolia-smoke-1788852219", "depositId": 1, "amount": "1000000", "tx": "0xd3f21f7e8fecd4ae61a5f3b58e28a50b6bf47dfefdef23309c131a2ccbc30e54" },
