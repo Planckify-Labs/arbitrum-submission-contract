@@ -1,7 +1,49 @@
 {
+  "network": "arbitrum-one",
   "chainId": 42161,
-  "deployedAt": 1775883559,
-  "implementation": "0x1aC593085Fa34c651E805085da4b2cabAC676F99",
-  "owner": "0x0b43A81e348D1163B88AD779ce97274f798cc04F",
-  "proxy": "0x479B0843C3e0627f36551660506dEd5b349Fa968"
+  "version": "2.1.0",
+  "proxy": "0xdE981573883294dfD35A7F0F399DB7e439E1f56B",
+  "implementation": "0x64E3E218BC06b6D6F2979805Bc581af748F2DF2D",
+  "owner": "0x0141781Aad86A023FaC70C6Aad0A8E7253164DB6",
+  "backendSigner": "0x299E4E56e9F05A21414A62479DA1514C20aA61e8",
+  "deployedAt": 1790846967,
+  "explorer": "https://arbiscan.io/address/0xdE981573883294dfD35A7F0F399DB7e439E1f56B",
+  "verified": "Sourcify: implementation fully verified. Arbiscan not confirmed.",
+  "compiler": { "solc": "0.8.30", "evmVersion": "cancun", "optimizerRuns": 200, "viaIR": true },
+
+  "purpose": "Arbitrum Open House hackathon: USDG (Paxos) bill-payment points and remittance. backendSigner was initialised with a fresh key, then rotated back to the shared (publicly known) signer via rotateBackendSigner so the existing API signer works (tx 0x86e7b276fd4694494132beeae2a34eaee63b752268c483217276debb4946ec67).",
+
+  "usdg": {
+    "note": "Paxos USDG on Arbitrum One (docs.paxos.com/guides/stablecoin/usdg/mainnet); symbol USDG and decimals 6 read on-chain.",
+    "address": "0x004B506865409877C9fA29bfb1ebA929984B9bbC",
+    "decimals": 6
+  },
+  "usdc": {
+    "note": "Circle native USDC on Arbitrum One; symbol USDC and decimals 6 read on-chain.",
+    "address": "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+    "decimals": 6
+  },
+
+  "postDeployConfig": [
+    { "step": 1, "call": "addAllowedPaymentToken(USDG)", "tx": "0x68104e0b831433efa4046a4d6276d6c2a09b5531225977520fbf6ac88a80c54f" },
+    { "step": 2, "call": "queueSweepCap(USDG, 1000000000)", "tx": "0x4f21fdb23a9c876b32ed7c83c8c9f132035b3af14d148dc82b9466f9aac90ba3" },
+    { "step": 3, "call": "applySweepCap(USDG)", "tx": "0x855965f9061b84b4ec5af1e11ba0eb620d0fcf9c63cbc36198adfbf6fc7ad323" },
+    { "step": 4, "call": "addAllowedPaymentToken(USDC)", "tx": "0x446295545147d2662747df2b97f8b73980b840157de508e4ba19acac0f6890c8" },
+    { "step": 5, "call": "queueSweepCap(USDC, 1000000000)", "tx": "0xa83ca99dc0c71eb978c7a168e29bb57250190c1bd94e6c712af224e0359d726e" },
+    { "step": 6, "call": "applySweepCap(USDC)", "tx": "0x728e5a74995db3a11a2518eac34fc9cd88bf49e402961b8f7a52bd3dcd5d6463" },
+    { "step": 7, "call": "setWithdrawalDelay(86400)", "tx": "0x7b119dab01e2334cda7dfc688e8783a6b9c2119d4c6b2c258cda5ef8784b2912" }
+  ],
+
+  "state": {
+    "allowedPaymentTokens": ["0x004B506865409877C9fA29bfb1ebA929984B9bbC", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"],
+    "sweepCap": {
+      "0x004B506865409877C9fA29bfb1ebA929984B9bbC": "1000000000",
+      "0xaf88d065e77c8cC2239327C5EDb3A432268e5831": "1000000000"
+    },
+    "withdrawalDelay": 86400
+  },
+
+  "verifiedEndToEnd": {
+    "note": "Not yet exercised: the deployer holds no USDG or USDC on Arbitrum One. createTransaction / depositPoints / processMerchantPayment still need a live smoke test."
+  }
 }
