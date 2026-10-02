@@ -20,4 +20,4 @@
 | Arbitrum Sepolia | `0x2469Bd87e809772f491af0E7847fbf7B62c388ae` |
 | Robinhood Chain testnet | `0x479B0843C3e0627f36551660506dEd5b349Fa968` |
 
-Known limitations (backend signer is a public key, single-EOA owner, Arbitrum One not smoke-tested, no audit) are listed in the hub README section 5. `evm/deployments` also holds records for earlier non-Arbitrum deployments (Base Sepolia, Monad, Arc). Solana, Stellar and Sui contracts in this repository are from earlier work and are not part of this submission.
+`evm/deployments` also holds records for earlier non-Arbitrum deployments (Base Sepolia, Monad, Arc). Solana, Stellar and Sui contracts in this repository are from earlier work and are not part of this submission.
